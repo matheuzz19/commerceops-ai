@@ -1,0 +1,1 @@
+"""Inventory specialist package."""

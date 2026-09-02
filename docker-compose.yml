@@ -1,0 +1,55 @@
+services:
+  agent-api:
+    build: .
+    command: uvicorn commerceops.api.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      - postgres
+      - redis
+
+  mcp-server:
+    build: .
+    command: python -m commerceops.mcp.server
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: commerceops
+      POSTGRES_USER: commerceops
+      POSTGRES_PASSWORD: commerceops
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
