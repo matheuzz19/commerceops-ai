@@ -34,42 +34,52 @@ The current implementation demonstrates:
 - PostgreSQL-only backend tests, strict type checking, linting, container builds,
   and migration checks in CI
 
-## Architecture
+## Architecture and delivery order
 
-The system is being implemented in milestone order. Components marked
-**implemented** exist today; the agent execution path remains **planned**.
+The runtime architecture is defined in [docs/architecture.md](docs/architecture.md).
+The implementation itself follows this numerical milestone order; components
+marked **implemented** exist today.
 
 ```text
-Client
-  |
-  v
-FastAPI API                         implemented: GET /health only
-  |
-  v
-LangGraph supervisor               planned: M4-M5
-  |
-  v
-Policy and human approval          planned: M6
-  |
-  v
-MCP client and tool server         planned: M3
-  |
-  v
-Deterministic service layer        implemented: M2
-  |
-  v
-Tenant-scoped repositories         implemented: M2
-  |
-  v
-PostgreSQL                         implemented: M1-M2
-
-Redis buffering and checkpoints    planned: M7
-Evals and observability             planned: M8
-Deployment automation              planned: M9
+M1  Foundation                         implemented
+    FastAPI health endpoint, configuration, Docker Compose, CI
+    |
+    v
+M2  Domain and backend                 implemented
+    PostgreSQL, Alembic, tenant-scoped repositories, services, seed data
+    |
+    v
+M3  MCP layer                          next
+    MCP server/client, tool schemas, authorization, contract tests
+    |
+    v
+M4  LangGraph core                     planned
+    Typed state, message normalization, router, general node
+    |
+    v
+M5  Specialist workflows               planned
+    Sales, Inventory, Finance, entity resolution, tool verification
+    |
+    v
+M6  Policy and HITL                    planned
+    Risk policy, approvals, interrupt and resume
+    |
+    v
+M7  Buffering and checkpointing        planned
+    Redis message aggregation and persisted session state
+    |
+    v
+M8  Testing, evals, observability      planned
+    Agent evaluation, traces, structured logs, metrics
+    |
+    v
+M9  Deployment and portfolio packaging planned
+    Production deployment, documentation, demo, limitations
 ```
 
-See [docs/architecture.md](docs/architecture.md) for the complete target
-architecture and trust boundaries.
+The target runtime flow is FastAPI -> LangGraph -> policy -> MCP -> deterministic
+services -> PostgreSQL. Redis supports buffering and checkpointing when M7 is
+implemented.
 
 ## Implemented backend capabilities
 
