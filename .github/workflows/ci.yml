@@ -15,6 +15,20 @@ jobs:
   checks:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: commerceops_test
+          POSTGRES_USER: commerceops
+          POSTGRES_PASSWORD: commerceops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commerceops -d commerceops_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -35,7 +49,14 @@ jobs:
       - name: Typecheck
         run: python -m mypy src
 
+      - name: Apply migrations
+        env:
+          DATABASE_URL: postgresql+psycopg://commerceops:commerceops@localhost:5432/commerceops_test
+        run: alembic upgrade head
+
       - name: Tests
+        env:
+          TEST_DATABASE_URL: postgresql+psycopg://commerceops:commerceops@localhost:5432/commerceops_test
         run: python -m pytest tests/unit tests/integration tests/contract tests/evals
 
       - name: Docker build

@@ -46,6 +46,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  postgres-test:
+    image: postgres:16-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: commerceops_test
+      POSTGRES_USER: commerceops
+      POSTGRES_PASSWORD: commerceops
+    ports:
+      - "5433:5432"
+
   redis:
     image: redis:7-alpine
     ports:

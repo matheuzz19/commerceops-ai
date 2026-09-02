@@ -23,6 +23,15 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
+M2 database tests run against PostgreSQL, never SQLite. Start its isolated test
+database before running the full suite locally:
+
+```powershell
+docker compose --profile test up -d postgres-test
+$env:TEST_DATABASE_URL = "postgresql+psycopg://commerceops:commerceops@localhost:5433/commerceops_test"
+python -m pytest
+```
+
 CI runs the same deterministic checks on GitHub Actions:
 
 ```powershell
@@ -36,6 +45,12 @@ Run the API locally:
 
 ```powershell
 uvicorn commerceops.api.main:app --reload
+```
+
+Apply database migrations to a clean PostgreSQL database:
+
+```powershell
+alembic upgrade head
 ```
 
 Run the full local stack:
