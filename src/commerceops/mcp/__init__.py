@@ -1,1 +1,1 @@
-"""MCP server and client integration."""
+"""CommerceOps Model Context Protocol boundary."""

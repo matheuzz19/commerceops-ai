@@ -12,7 +12,12 @@ from uuid import UUID
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, selectinload
 
-from commerceops.domain.enums import InventoryMovementType, TransactionStatus, TransactionType
+from commerceops.domain.enums import (
+    InventoryMovementType,
+    OrderStatus,
+    TransactionStatus,
+    TransactionType,
+)
 from commerceops.domain.models import (
     Customer,
     InventoryMovement,
@@ -91,7 +96,12 @@ class OrderRepository:
         )
 
     def list_for_customer(
-        self, session: Session, tenant_id: UUID, customer_id: UUID | None = None, limit: int = 20
+        self,
+        session: Session,
+        tenant_id: UUID,
+        customer_id: UUID | None = None,
+        status: OrderStatus | None = None,
+        limit: int = 20,
     ) -> Sequence[Order]:
         statement = (
             select(Order)
@@ -102,6 +112,8 @@ class OrderRepository:
         )
         if customer_id is not None:
             statement = statement.where(Order.customer_id == customer_id)
+        if status is not None:
+            statement = statement.where(Order.status == status)
         return session.scalars(statement).all()
 
     def add(self, session: Session, order: Order) -> Order:

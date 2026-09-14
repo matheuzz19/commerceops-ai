@@ -3,14 +3,14 @@
 CommerceOps AI is a spec-driven commerce operations platform being built to
 coordinate Sales, Inventory, Finance, and General workflows through LangGraph
 and MCP. The project currently delivers the deterministic PostgreSQL backend
-that those future agent workflows will use: tenant-scoped data access, explicit
-business rules, database migrations, synthetic fixtures, and automated quality
-gates.
+and its MCP boundary: tenant-scoped data access, explicit business rules,
+schema-validated tools, specialist authorization, synthetic fixtures, and
+automated quality gates.
 
-> **Current status:** M1 Foundation and M2 Domain and Backend are complete. The
-> public API currently exposes only `GET /health`; MCP tools, LangGraph agents,
-> HITL, Redis buffering, observability, and deployment automation are planned
-> milestones and are not functional yet.
+> **Current status:** M1 Foundation, M2 Domain and Backend, and M3 MCP Layer are
+> complete. The public API currently exposes only `GET /health`; LangGraph
+> agents, HITL, Redis buffering, observability, and deployment automation remain
+> planned milestones.
 
 The authoritative source for requirements and implementation decisions is the
 [CommerceOps AI specification](docs/specs/COMMERCEOPS_AI_SPEC.md).
@@ -49,11 +49,11 @@ M2  Domain and backend                 implemented
     PostgreSQL, Alembic, tenant-scoped repositories, services, seed data
     |
     v
-M3  MCP layer                          next
+M3  MCP layer                          implemented
     MCP server/client, tool schemas, authorization, contract tests
     |
     v
-M4  LangGraph core                     planned
+M4  LangGraph core                     next
     Typed state, message normalization, router, general node
     |
     v
@@ -95,7 +95,8 @@ exposed through MCP contracts:
 - **Finance:** record and list transactions and calculate date-range summaries
   from posted transactions
 
-These are Python service capabilities, not public HTTP or MCP endpoints yet.
+These capabilities are available through schema-validated MCP tools, but are
+not public FastAPI endpoints yet.
 
 ## Safety and data integrity
 
@@ -111,9 +112,9 @@ These are Python service capabilities, not public HTTP or MCP endpoints yet.
 - Domain failures use explicit error codes such as `CUSTOMER_NOT_FOUND` and
   `INSUFFICIENT_STOCK`.
 
-High-risk approval, batch-write limits, specialist tool authorization, and
-schema-validated MCP inputs and outputs belong to M3 and M6; the README does not
-claim those runtime controls are implemented today.
+Specialist tool authorization and schema-validated MCP inputs and outputs are
+implemented. High-risk approval and batch-write enforcement belong to M6 and
+are not runtime controls yet.
 
 ## Technology choices
 
@@ -137,7 +138,7 @@ src/commerceops/
   repositories/    Tenant-scoped PostgreSQL access
   services/        Deterministic business operations
   db/              Session management and synthetic seed data
-  mcp/             M3 placeholders
+  mcp/             MCP server/client, schemas, authorization, execution
   graph/           M4+ placeholders
   observability/   M8 placeholders
 alembic/            Migration environment and revisions
@@ -184,8 +185,9 @@ Expected response:
 {"status":"ok"}
 ```
 
-The `mcp-server` Compose service is a keep-alive placeholder until M3 and should
-not be treated as a working MCP implementation.
+The `mcp-server` Compose service exposes Streamable HTTP on port `8001`. Tool
+execution requires trusted tenant and specialist context supplied by the
+application boundary; those values are never model-visible tool arguments.
 
 ## Database migrations
 
@@ -218,7 +220,9 @@ docker compose --profile test stop postgres-test
 
 Current tests cover the health route, inventory ledger aggregation and negative
 stock rejection, server-side order totals, cross-tenant access rejection,
-posted-only financial summaries, and idempotent multi-tenant seed data.
+posted-only financial summaries, idempotent multi-tenant seed data, all twelve
+MCP tools, specialist authorization, trusted tenant context, and structured
+success and failure envelopes.
 
 Run the remaining CI checks locally:
 
@@ -238,8 +242,9 @@ image.
 | --- | --- | --- |
 | M1 | Packaging, configuration, health API, Docker Compose, CI foundation | Complete |
 | M2 | PostgreSQL models, migrations, repositories, services, seed data | Complete |
-| M3 | MCP server/client, tool schemas, authorization matrix, contract tests | Next |
-| M4-M5 | LangGraph core and specialist workflows | Planned |
+| M3 | MCP server/client, tool schemas, authorization matrix, contract tests | Complete |
+| M4 | Typed state, normalization, routing, general node, specialist skeletons | Next |
+| M5 | Specialist workflows, entity resolution, tool-result verification | Planned |
 | M6 | Policy engine and human-in-the-loop approval | Planned |
 | M7 | Redis buffering and checkpoint persistence | Planned |
 | M8 | Agent evals, tracing, structured logs, and metrics | Planned |
@@ -248,7 +253,6 @@ image.
 ## Current limitations and non-goals
 
 - The API does not yet expose commerce workflows.
-- The MCP server and client are placeholders; there are no MCP tool contracts.
 - LangGraph routing, specialist agents, entity resolution, and tool-result
   verification are not implemented.
 - Redis is available in Compose but is not connected to message buffering or

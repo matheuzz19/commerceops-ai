@@ -1,4 +1,3 @@
-from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -73,7 +72,9 @@ def test_financial_summary_includes_only_posted_transactions(
 ) -> None:
     tenant, _ = tenants
     finance = FinanceService(session)
-    finance.record_transaction(tenant.id, TransactionType.REVENUE, Decimal("100.00"), "Sale")
+    posted_revenue = finance.record_transaction(
+        tenant.id, TransactionType.REVENUE, Decimal("100.00"), "Sale"
+    )
     finance.record_expense(tenant.id, Decimal("30.00"), "Hosting")
     finance.record_transaction(
         tenant.id,
@@ -83,7 +84,8 @@ def test_financial_summary_includes_only_posted_transactions(
         status=TransactionStatus.PENDING,
     )
 
-    summary = finance.summary(tenant.id, date.today(), date.today())
+    persisted_date = posted_revenue.created_at.date()
+    summary = finance.summary(tenant.id, persisted_date, persisted_date)
 
     assert summary.revenue == Decimal("100.00")
     assert summary.expenses == Decimal("30.00")

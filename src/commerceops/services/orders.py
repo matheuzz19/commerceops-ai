@@ -74,7 +74,11 @@ class OrderService:
         return order
 
     def list(
-        self, tenant_id: UUID, customer_id: UUID | None = None, limit: int = 20
+        self,
+        tenant_id: UUID,
+        customer_id: UUID | None = None,
+        status: OrderStatus | None = None,
+        limit: int = 20,
     ) -> Sequence[Order]:
         if not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
@@ -83,7 +87,9 @@ class OrderService:
             and self.customer_repository.get(self.session, tenant_id, customer_id) is None
         ):
             raise DomainError("CUSTOMER_NOT_FOUND", "Customer was not found.")
-        return self.order_repository.list_for_customer(self.session, tenant_id, customer_id, limit)
+        return self.order_repository.list_for_customer(
+            self.session, tenant_id, customer_id, status, limit
+        )
 
     def update(
         self,
