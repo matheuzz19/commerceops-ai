@@ -621,10 +621,20 @@ class NormalizedMessage(BaseModel):
     content_type: Literal["text", "audio", "image", "document"]
     timestamp: datetime
 
-class RouteDecision(BaseModel):
-    department: Literal["sales", "inventory", "finance", "general"]
-    confidence: float
+class AgentTask(BaseModel):
+    agent: Literal["sales", "inventory", "finance", "general"]
+    query: str
     reason: str
+
+class RoutingPlan(BaseModel):
+    tasks: list[AgentTask]
+
+class SpecialistResult(BaseModel):
+    task_index: int
+    agent: Literal["sales", "inventory", "finance", "general"]
+    query: str
+    response: str
+    error: str | None
 
 class ResolvedEntity(BaseModel):
     entity_type: Literal["customer", "product", "order", "transaction"]
@@ -641,7 +651,7 @@ class ProposedAction(BaseModel):
 class AgentState(TypedDict):
     messages: list
     normalized_message: NormalizedMessage
-    route: RouteDecision | None
+    routing_plan: RoutingPlan | None
     tenant_id: str
     user_id: str
     session_id: str
@@ -649,6 +659,7 @@ class AgentState(TypedDict):
     resolved_entities: list[ResolvedEntity]
     proposed_actions: list[ProposedAction]
     tool_results: list[dict]
+    specialist_results: list[SpecialistResult]
     requires_confirmation: bool
     confirmation_request: dict | None
     error: str | None
@@ -668,10 +679,10 @@ normalize_message
   v
 route_request
   |
-  +--> sales_subgraph
-  +--> inventory_subgraph
-  +--> finance_subgraph
-  +--> general_response
+  +-- Send --> sales_subgraph -------+
+  +-- Send --> inventory_subgraph ---+--> aggregate_results
+  +-- Send --> finance_subgraph -----+
+  +-- Send --> general_response -----+
   |
   v
 finalize_response
@@ -683,18 +694,20 @@ END
 Router requirements:
 
 - use structured output
-- return only one department
-- include confidence and reason
-- route ambiguous action requests to `general`
-- route multi-domain requests to the primary domain in MVP and ask clarifying questions when execution would require multiple specialists
+- return a bounded list of department-scoped tasks
+- include the target agent, scoped query and reason for every task
+- use LangGraph `Send` to dispatch relevant specialists in parallel
+- deduplicate repeated specialist assignments
+- route ambiguous action requests to `general` alone
+- aggregate parallel specialist results deterministically in original task order
 
-Decision: router is a structured LLM node, not a full agent.
+Decision: router is a structured LLM orchestrator that dynamically fans out to specialist workers with LangGraph `Send`; it is not a tool-capable agent.
 
-Reason: it classifies intent and should not use tools.
+Reason: one business request may contain independent Sales, Inventory and Finance tasks that can be handled concurrently without granting tools to the router.
 
-Rejected alternative: agent executor router with tool access.
+Rejected alternative: force multi-domain requests through only one primary specialist or give the router tool access.
 
-Consequence: routing becomes easier to evaluate and less error-prone.
+Consequence: parallel worker results require reducer-backed state, deterministic fan-in and agent-set routing evaluations.
 
 ### 11.2 Sales Subgraph
 
@@ -1248,14 +1261,14 @@ Deliverables:
 
 - typed graph state
 - normalized message handling
-- router
+- structured router and `Send`-based multi-specialist fan-out
 - general node
 - specialist subgraph skeletons
 
 Done when:
 
 - routing eval baseline passes
-- requests reach correct graph path
+- requests reach every correct graph path and parallel results aggregate deterministically
 
 ### M5 — Specialist Workflows
 

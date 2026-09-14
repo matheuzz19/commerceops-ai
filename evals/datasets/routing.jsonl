@@ -1,1 +1,41 @@
-
+{"query":"Create a customer named Northwind Bakery","expected_agents":["sales"]}
+{"query":"Find the customer Alice Morgan","expected_agents":["sales"]}
+{"query":"Search for wireless keyboard products","expected_agents":["sales"]}
+{"query":"List orders for customer Bruno Lima","expected_agents":["sales"]}
+{"query":"Create an order for two desk lamps","expected_agents":["sales"]}
+{"query":"Show all confirmed orders","expected_agents":["sales"]}
+{"query":"Add a new customer with an email address","expected_agents":["sales"]}
+{"query":"Look up products matching standing desk","expected_agents":["sales"]}
+{"query":"Cancel order ORD-100","expected_agents":["sales"]}
+{"query":"Mark an order as fulfilled","expected_agents":["sales"]}
+{"query":"Check stock for the wireless keyboard","expected_agents":["inventory"]}
+{"query":"List inventory movements for desk lamps","expected_agents":["inventory"]}
+{"query":"Record 20 units received into inventory","expected_agents":["inventory"]}
+{"query":"Remove three damaged products from stock","expected_agents":["inventory"]}
+{"query":"How many standing desks are available?","expected_agents":["inventory"]}
+{"query":"Adjust inventory after the warehouse count","expected_agents":["inventory"]}
+{"query":"Show recent stock movements","expected_agents":["inventory"]}
+{"query":"Record an outbound inventory movement","expected_agents":["inventory"]}
+{"query":"What is the current inventory level for SKU KB-1?","expected_agents":["inventory"]}
+{"query":"Add returned units back to stock","expected_agents":["inventory"]}
+{"query":"Show this month's revenue","expected_agents":["finance"]}
+{"query":"Record a software subscription expense","expected_agents":["finance"]}
+{"query":"List posted transactions","expected_agents":["finance"]}
+{"query":"What were expenses last month?","expected_agents":["finance"]}
+{"query":"Give me the financial summary for this quarter","expected_agents":["finance"]}
+{"query":"Create an expense transaction for office rent","expected_agents":["finance"]}
+{"query":"List pending revenue transactions","expected_agents":["finance"]}
+{"query":"What is our net result for August?","expected_agents":["finance"]}
+{"query":"Hello","expected_agents":["general"]}
+{"query":"What can you help me with?","expected_agents":["general"]}
+{"query":"Please help","expected_agents":["general"]}
+{"query":"Book a flight for tomorrow","expected_agents":["general"]}
+{"query":"Do the thing we discussed","expected_agents":["general"]}
+{"query":"Can you manage suppliers?","expected_agents":["general"]}
+{"query":"Tell me a joke","expected_agents":["general"]}
+{"query":"I need to update something","expected_agents":["general"]}
+{"query":"Show this month's revenue and current keyboard stock","expected_agents":["finance","inventory"]}
+{"query":"Find customer Alice and show stock for desk lamps","expected_agents":["sales","inventory"]}
+{"query":"List customer orders and this month's financial summary","expected_agents":["sales","finance"]}
+{"query":"Find standing desk products, check stock, and show posted expenses","expected_agents":["sales","inventory","finance"]}
+{"query":"Confirm order ORD-100 and remove two keyboards from inventory","expected_agents":["sales","inventory"]}

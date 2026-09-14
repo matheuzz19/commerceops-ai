@@ -10,10 +10,12 @@ class Settings(BaseSettings):
     environment: str = "local"
     log_level: str = "INFO"
     openai_api_key: str | None = None
+    openai_model: str = "gpt-5.4-mini"
     database_url: str = "postgresql+psycopg://commerceops:commerceops@localhost:5432/commerceops"
     redis_url: str = "redis://localhost:6379/0"
     langsmith_api_key: str | None = None
     langsmith_tracing: bool = False
+    langsmith_project: str = "commerceops-ai-m4"
     message_debounce_seconds: int = 3
     max_batch_write: int = 5
     large_inventory_movement: int = 100

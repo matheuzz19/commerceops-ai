@@ -19,10 +19,10 @@ NormalizedMessage
       v
 LangGraph Supervisor
       |
-      +--> General Node
-      +--> Sales Subgraph
-      +--> Inventory Subgraph
-      +--> Finance Subgraph
+      +-- Send --> General Node -------+
+      +-- Send --> Sales Subgraph -----+--> Result Aggregation
+      +-- Send --> Inventory Subgraph -+
+      +-- Send --> Finance Subgraph ---+
       |
       v
 Policy Engine
@@ -52,3 +52,11 @@ PostgreSQL
 - API headers resolve trusted `tenant_id` and `user_id` in local development.
 - Agent/tool arguments must never supply `tenant_id`.
 - Repository methods must require `tenant_id` and filter every query by it.
+
+## M4 Routing Core
+
+The supervisor uses structured classification to decompose one request into a
+bounded set of department tasks. LangGraph `Send` dispatches those tasks in
+parallel. Specialist results use a list reducer and are sorted back into router
+order before the final response is composed. The router itself has no tools,
+and General is the exclusive route for ambiguous or unsupported requests.
