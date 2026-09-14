@@ -94,6 +94,7 @@ async def test_all_mvp_tools_work_through_mcp_with_structured_success_results(
     inventory = _client(session, tenant, Specialist.INVENTORY)
     results.extend(
         [
+            await inventory.call_tool("search_products", {"query": "Widget"}),
             await inventory.call_tool(
                 "create_inventory_movement",
                 {

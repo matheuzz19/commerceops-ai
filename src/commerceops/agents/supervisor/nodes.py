@@ -23,6 +23,8 @@ def normalize_message(state: AgentState) -> dict[str, object]:
         "session_id": message.session_id,
         "normalized_message": message,
         "specialist_results": [],
+        "resolved_entities": [],
+        "tool_results": [],
         "final_response": None,
         "error": None,
     }

@@ -60,3 +60,33 @@ bounded set of department tasks. LangGraph `Send` dispatches those tasks in
 parallel. Specialist results use a list reducer and are sorted back into router
 order before the final response is composed. The router itself has no tools,
 and General is the exclusive route for ambiguous or unsupported requests.
+
+## M5 Specialist Execution
+
+Each operational specialist follows a plan-resolve-execute-verify pipeline:
+
+```text
+Structured specialist plan
+      |
+      v
+Resolve customer/product/order when required
+      |
+      v
+Call one authorized MCP tool
+      |
+      v
+Validate the tool-specific result schema
+      |
+      v
+Compose a success, clarification, or recoverable failure response
+```
+
+Model output never supplies a trusted write identifier. Sales resolves customers
+and products before creating orders and observes an order through `list_orders`
+before a safe update. Inventory resolves products before stock operations.
+Finance M5 writes are limited to unlinked expenses. High-risk and combined
+cross-specialist writes remain blocked pending M6 policy and HITL controls.
+
+Parallel MCP branches use independent SQLAlchemy sessions. Their tool results
+and resolved entities are reducer-backed state collections, preserving every
+branch without sharing non-thread-safe database sessions.

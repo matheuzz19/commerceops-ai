@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     langsmith_api_key: str | None = None
     langsmith_tracing: bool = False
     langsmith_project: str = "commerceops-ai-m4"
+    default_tenant_timezone: str = "UTC"
     message_debounce_seconds: int = 3
     max_batch_write: int = 5
     large_inventory_movement: int = 100

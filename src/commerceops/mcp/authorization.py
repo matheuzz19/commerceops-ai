@@ -14,6 +14,7 @@ SALES_TOOLS = frozenset(
 )
 INVENTORY_TOOLS = frozenset(
     {
+        "search_products",
         "get_inventory_level",
         "list_inventory_movements",
         "create_inventory_movement",
@@ -33,4 +34,3 @@ TOOL_AUTHORIZATION: dict[Specialist, frozenset[str]] = {
 
 def is_authorized(specialist: Specialist, tool_name: str) -> bool:
     return tool_name in TOOL_AUTHORIZATION[specialist]
-

@@ -2,8 +2,11 @@ from collections.abc import Awaitable
 
 import pytest
 
+from commerceops.agents.planning import FinancePlan, InventoryPlan, SalesPlan
+from commerceops.agents.runtime import SpecialistDependencies
 from commerceops.agents.supervisor.graph import create_supervisor_graph
 from commerceops.graph.state import AgentState, AgentTask, RoutingPlan
+from commerceops.mcp.tools.schemas import ToolResult
 
 
 class FixedClassifier:
@@ -17,6 +20,28 @@ class FixedClassifier:
 class FailingClassifier:
     def classify(self, query: str) -> Awaitable[RoutingPlan]:
         raise RuntimeError("model unavailable")
+
+
+class FixedPlanner:
+    def __init__(self, plan: SalesPlan | InventoryPlan | FinancePlan) -> None:
+        self.value = plan
+
+    async def plan(self, query: str) -> SalesPlan | InventoryPlan | FinancePlan:
+        return self.value
+
+
+class NoToolClient:
+    async def call_tool(self, tool_name: str, arguments: object) -> ToolResult:
+        raise AssertionError("M4 routing tests must not call tools")
+
+
+def specialist_dependencies() -> SpecialistDependencies:
+    return SpecialistDependencies(
+        sales_planner=FixedPlanner(SalesPlan(action="clarify")),  # type: ignore[arg-type]
+        inventory_planner=FixedPlanner(InventoryPlan(action="clarify")),  # type: ignore[arg-type]
+        finance_planner=FixedPlanner(FinancePlan(action="clarify")),  # type: ignore[arg-type]
+        client_factory=lambda tenant_id, specialist: NoToolClient(),
+    )
 
 
 def graph_input(content: str = "request") -> AgentState:
@@ -37,7 +62,7 @@ async def test_single_domain_request_reaches_one_specialist() -> None:
             tasks=[AgentTask(agent="inventory", query="Check keyboard stock", reason="Stock")]
         )
     )
-    graph = create_supervisor_graph(classifier)
+    graph = create_supervisor_graph(classifier, specialist_dependencies())
 
     events = [event async for event in graph.astream(graph_input(), stream_mode="updates")]
     visited = {node for event in events for node in event}
@@ -57,7 +82,7 @@ async def test_multi_domain_request_fans_out_and_aggregates_in_task_order() -> N
             ]
         )
     )
-    graph = create_supervisor_graph(classifier)
+    graph = create_supervisor_graph(classifier, specialist_dependencies())
 
     result = await graph.ainvoke(graph_input("Show revenue and keyboard stock"))
 
@@ -65,7 +90,7 @@ async def test_multi_domain_request_fans_out_and_aggregates_in_task_order() -> N
     assert result["final_response"].index("Finance:") < result["final_response"].index(
         "Inventory:"
     )
-    assert "tool_results" not in result
+    assert result["tool_results"] == []
 
 
 @pytest.mark.asyncio
@@ -86,7 +111,7 @@ async def test_sales_and_inventory_updates_fan_out_without_executing_writes() ->
             ]
         )
     )
-    graph = create_supervisor_graph(classifier)
+    graph = create_supervisor_graph(classifier, specialist_dependencies())
 
     events = [
         event
@@ -106,7 +131,7 @@ async def test_sales_and_inventory_updates_fan_out_without_executing_writes() ->
         "sales",
         "inventory",
     ]
-    assert "tool_results" not in result
+    assert result["tool_results"] == []
     assert result.get("proposed_actions") is None
 
 
@@ -120,7 +145,7 @@ async def test_ambiguous_plan_dispatches_general_only() -> None:
             ]
         )
     )
-    graph = create_supervisor_graph(classifier)
+    graph = create_supervisor_graph(classifier, specialist_dependencies())
 
     events = [event async for event in graph.astream(graph_input(), stream_mode="updates")]
     visited = {node for event in events for node in event}
@@ -131,7 +156,7 @@ async def test_ambiguous_plan_dispatches_general_only() -> None:
 
 @pytest.mark.asyncio
 async def test_router_failure_recovers_through_general() -> None:
-    graph = create_supervisor_graph(FailingClassifier())
+    graph = create_supervisor_graph(FailingClassifier(), specialist_dependencies())
 
     result = await graph.ainvoke(graph_input("unclear"))
 

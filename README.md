@@ -7,10 +7,10 @@ and its MCP boundary: tenant-scoped data access, explicit business rules,
 schema-validated tools, specialist authorization, synthetic fixtures, and
 automated quality gates.
 
-> **Current status:** M1 Foundation through M4 LangGraph Core are complete. The
+> **Current status:** M1 Foundation through M5 Specialist Workflows are complete. The
 > supervisor uses structured routing and LangGraph `Send` to fan multi-domain
-> requests out to specialist skeletons in parallel. The public API currently
-> exposes only `GET /health`; specialist execution begins in M5.
+> requests out to executable specialist workflows in parallel. The public API
+> currently exposes only `GET /health`; policy and HITL controls begin in M6.
 
 The authoritative source for requirements and implementation decisions is the
 [CommerceOps AI specification](docs/specs/COMMERCEOPS_AI_SPEC.md).
@@ -57,11 +57,11 @@ M4  LangGraph core                     implemented
     Typed state, normalization, Send-based router, general node
     |
     v
-M5  Specialist workflows               next
+M5  Specialist workflows               implemented
     Sales, Inventory, Finance, entity resolution, tool verification
     |
     v
-M6  Policy and HITL                    planned
+M6  Policy and HITL                    next
     Risk policy, approvals, interrupt and resume
     |
     v
@@ -130,10 +130,8 @@ General is an exclusive route. If a request is truly ambiguous, unsupported, or
 only asks for help, the supervisor dispatches General without simultaneously
 sending the request to an action-capable specialist.
 
-M4 specialist workers are intentionally safe skeletons. They prove routing,
-parallel execution, state aggregation, and failure recovery without calling MCP
-tools or performing writes. Entity resolution, tool execution, and tool-result
-verification are implemented in M5.
+M4 initially introduced safe specialist skeletons. M5 replaces them with typed
+planning, entity resolution, MCP execution, and tool-result verification.
 
 ### Parallel write-intent safety
 
@@ -193,6 +191,39 @@ Required minimum: 90%
 
 Both evaluation runs were traced through LangSmith. The active tracing project
 is `commerceops-ai-m4`, with the tags `m4` and `routing-baseline`.
+
+## M5: Specialist workflows
+
+Sales, Inventory, and Finance now use tool-free structured planners followed by
+deterministic execution nodes. A planner describes the requested operation using
+a department-specific Pydantic schema; application code then validates required
+fields, resolves referenced entities, selects the authorized MCP tool, and
+verifies the tool-specific result schema before composing a response.
+
+Sales supports customer creation and search, product search, customer-scoped
+order listing, order creation, and safe order updates. Order creation always
+resolves the customer and every product through prior MCP search results. The
+workflow ignores invented identifiers and does not call `create_order` when an
+entity is missing or ambiguous.
+
+Inventory supports stock lookup, movement listing, and movement creation. Every
+product-specific operation first resolves the product through `search_products`.
+The Inventory authorization scope now includes that read tool, matching the
+source-of-truth authorization matrix.
+
+Finance supports deterministic monthly or explicit-date summaries, transaction
+listing, and expense recording. Relative periods such as `this month` and
+`last month` are calculated in application code using the configured tenant
+timezone instead of trusting model-generated dates.
+
+MCP responses are validated twice: first as the shared tool envelope and then as
+the expected tool-specific data model. Failed calls and malformed success data
+produce recoverable specialist errors and never produce a success claim.
+
+High-risk cancellation/refund operations, large inventory movements, and large
+financial transactions remain blocked until M6 provides checkpointed approval.
+Parallel branches can perform independent reads, but cross-specialist write
+approval and combined policy evaluation also remain M6 responsibilities.
 
 ## Implemented backend capabilities
 
@@ -355,8 +386,9 @@ Current automated coverage includes:
 The verified M1-M4 results are:
 
 ```text
-Complete pytest suite: 35 passed
+Complete pytest suite: 45 passed
 Focused M4 suite:      12 passed
+Focused M5 integration: 10 passed
 Live routing baseline: 41/41 (100%)
 Ruff:                  passed
 Strict mypy:           passed
@@ -382,8 +414,8 @@ image.
 | M2 | PostgreSQL models, migrations, repositories, services, seed data | Complete |
 | M3 | MCP server/client, tool schemas, authorization matrix, contract tests | Complete |
 | M4 | Typed state, parallel routing, general node, specialist skeletons | Complete |
-| M5 | Specialist workflows, entity resolution, tool-result verification | Next |
-| M6 | Policy engine and human-in-the-loop approval | Planned |
+| M5 | Specialist workflows, entity resolution, tool-result verification | Complete |
+| M6 | Policy engine and human-in-the-loop approval | Next |
 | M7 | Redis buffering and checkpoint persistence | Planned |
 | M8 | Agent evals, tracing, structured logs, and metrics | Planned |
 | M9 | Deployment and portfolio packaging | Planned |
@@ -391,8 +423,8 @@ image.
 ## Current limitations and non-goals
 
 - The API does not yet expose commerce workflows.
-- Specialist business execution, entity resolution, and tool-result
-  verification are not implemented; M4 workers are safe routing skeletons.
+- High-risk and combined multi-specialist writes are intentionally blocked until
+  M6 adds policy evaluation, confirmation, interrupt, and resume behavior.
 - Redis is available in Compose but is not connected to message buffering or
   checkpoints.
 - M4 routing evaluations and LangSmith traces are implemented. Comprehensive
