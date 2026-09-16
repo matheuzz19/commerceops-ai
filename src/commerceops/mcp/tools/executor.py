@@ -97,7 +97,13 @@ class ToolExecutor:
         try:
             with self._session_factory() as session:
                 try:
-                    data = self._dispatch(session, runtime.tenant_id, tool_name, arguments)
+                    data = self._dispatch(
+                        session,
+                        runtime.tenant_id,
+                        tool_name,
+                        arguments,
+                        runtime.approval_grants,
+                    )
                     session.commit()
                 except Exception:
                     session.rollback()
@@ -120,6 +126,7 @@ class ToolExecutor:
         tenant_id: UUID,
         tool_name: str,
         arguments: Mapping[str, object],
+        approval_grants: frozenset[str],
     ) -> BaseModel:
         if tool_name == "search_customers":
             search_customers_input = SearchCustomersInput.model_validate(arguments)
@@ -199,6 +206,7 @@ class ToolExecutor:
                 create_movement_input.movement_type,
                 create_movement_input.quantity,
                 create_movement_input.reason,
+                allow_negative="negative_inventory" in approval_grants,
             )
             return InventoryMovementResultData(movement=_movement_data(movement))
         if tool_name == "get_financial_summary":

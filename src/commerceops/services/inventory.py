@@ -42,6 +42,8 @@ class InventoryService:
         movement_type: InventoryMovementType,
         quantity: int,
         reason: str,
+        *,
+        allow_negative: bool = False,
     ) -> InventoryMovement:
         self._require_product(tenant_id, product_id)
         if movement_type in {InventoryMovementType.IN, InventoryMovementType.OUT}:
@@ -51,7 +53,7 @@ class InventoryService:
 
         if movement_type == InventoryMovementType.OUT:
             available = self.inventory_repository.stock_level(self.session, tenant_id, product_id)
-            if available - quantity < 0:
+            if available - quantity < 0 and not allow_negative:
                 raise DomainError(
                     "INSUFFICIENT_STOCK",
                     "Inventory movement would make stock negative.",

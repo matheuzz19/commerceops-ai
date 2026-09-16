@@ -97,7 +97,7 @@ class AgentState(TypedDict, total=False):
     # State reserved by the source-of-truth specification for later milestones.
     intent: str | None
     resolved_entities: Annotated[list[ResolvedEntity], operator.add]
-    proposed_actions: list[ProposedAction]
+    proposed_actions: Annotated[list[ProposedAction], operator.add]
     tool_results: Annotated[list[dict[str, Any]], operator.add]
     requires_confirmation: bool
     confirmation_request: dict[str, Any] | None

@@ -25,6 +25,7 @@ from commerceops.graph.state import AgentState
 def create_supervisor_graph(
     classifier: QueryClassifier | None = None,
     specialist_dependencies: SpecialistDependencies | None = None,
+    checkpointer: Any | None = None,
 ) -> Any:
     """Compile the graph, optionally injecting a deterministic test classifier."""
 
@@ -64,4 +65,4 @@ def create_supervisor_graph(
     for specialist in ("sales", "inventory", "finance", "general"):
         builder.add_edge(specialist, "aggregate_results")
     builder.add_edge("aggregate_results", END)
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)

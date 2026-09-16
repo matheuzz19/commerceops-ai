@@ -24,6 +24,7 @@ def normalize_message(state: AgentState) -> dict[str, object]:
         "normalized_message": message,
         "specialist_results": [],
         "resolved_entities": [],
+        "proposed_actions": [],
         "tool_results": [],
         "final_response": None,
         "error": None,

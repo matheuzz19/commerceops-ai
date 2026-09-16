@@ -1,6 +1,6 @@
 """M5 specialist runtime dependencies and verified MCP calls."""
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Set
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
@@ -29,7 +29,7 @@ class ToolCaller(Protocol):
     ) -> Awaitable[ToolResult]: ...
 
 
-ToolClientFactory = Callable[[UUID, Specialist], ToolCaller]
+ToolClientFactory = Callable[..., ToolCaller]
 
 
 @dataclass(frozen=True)
@@ -40,10 +40,31 @@ class SpecialistDependencies:
     client_factory: ToolClientFactory
 
 
-def default_client_factory(tenant_id: UUID, specialist: Specialist) -> ToolCaller:
+def default_client_factory(
+    tenant_id: UUID,
+    specialist: Specialist,
+    approval_grants: Set[str] = frozenset(),
+) -> ToolCaller:
     return CommerceOpsMCPClient(
-        ToolRuntimeContext(tenant_id=tenant_id, specialist=specialist)
+        ToolRuntimeContext(
+            tenant_id=tenant_id,
+            specialist=specialist,
+            approval_grants=frozenset(approval_grants),
+        )
     )
+
+
+def create_tool_client(
+    factory: ToolClientFactory,
+    tenant_id: UUID,
+    specialist: Specialist,
+    approval_grants: frozenset[str] = frozenset(),
+) -> ToolCaller:
+    """Create a client, passing trusted grants only after an HITL approval."""
+
+    if approval_grants:
+        return factory(tenant_id, specialist, approval_grants)
+    return factory(tenant_id, specialist)
 
 
 def create_default_specialist_dependencies() -> SpecialistDependencies:

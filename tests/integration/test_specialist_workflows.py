@@ -5,6 +5,8 @@ from typing import Generic, TypeVar, cast
 from uuid import UUID
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
 from sqlalchemy.orm import Session
 
 from commerceops.agents.finance.graph import make_finance_specialist
@@ -58,9 +60,17 @@ def _reuse_session(session: Session) -> Generator[Session, None, None]:
 
 
 def _client_factory(session: Session):  # type: ignore[no-untyped-def]
-    def factory(tenant_id: UUID, specialist: Specialist) -> ToolCaller:
+    def factory(
+        tenant_id: UUID,
+        specialist: Specialist,
+        approval_grants: frozenset[str] = frozenset(),
+    ) -> ToolCaller:
         return CommerceOpsMCPClient(
-            ToolRuntimeContext(tenant_id=tenant_id, specialist=specialist),
+            ToolRuntimeContext(
+                tenant_id=tenant_id,
+                specialist=specialist,
+                approval_grants=approval_grants,
+            ),
             lambda: _reuse_session(session),
         )
 
@@ -207,6 +217,72 @@ async def test_inventory_movement_uses_resolved_product_id(
 
 
 @pytest.mark.asyncio
+async def test_approved_negative_inventory_movement_resumes_with_trusted_grant(
+    session: Session, tenants: tuple[Tenant, Tenant]
+) -> None:
+    tenant, _ = tenants
+    product = ProductService(session).create(
+        tenant.id, "Compact Keyboard", "KEY-01", Decimal("49.90")
+    )
+    InventoryService(session).create_movement(
+        tenant.id, product.id, InventoryMovementType.IN, 1, "Opening stock"
+    )
+    session.commit()
+    dependencies = SpecialistDependencies(
+        sales_planner=FixedPlanner(SalesPlan(action="clarify")),
+        inventory_planner=FixedPlanner(
+            InventoryPlan(
+                action="create_movement",
+                product_query="Compact Keyboard",
+                movement_type=InventoryMovementType.OUT,
+                quantity=2,
+                reason="Approved exception",
+            )
+        ),
+        finance_planner=FixedPlanner(FinancePlan(action="clarify")),
+        client_factory=_client_factory(session),
+    )
+    graph = create_supervisor_graph(
+        FixedClassifier(
+            RoutingPlan(
+                tasks=[
+                    AgentTask(
+                        agent="inventory",
+                        query="Remove two keyboards",
+                        reason="Inventory movement",
+                    )
+                ]
+            )
+        ),
+        dependencies,
+        checkpointer=InMemorySaver(),
+    )
+    config = {"configurable": {"thread_id": "negative-stock-test"}}
+
+    pending = await graph.ainvoke(
+        {
+            "tenant_id": str(tenant.id),
+            "user_id": "operator",
+            "session_id": "session",
+            "message_id": "message",
+            "content": "Remove two keyboards",
+            "content_type": "text",
+        },
+        config=config,
+    )
+
+    assert pending["__interrupt__"][0].value["risk_reason"] == (
+        "The movement would make inventory negative."
+    )
+    assert InventoryService(session).get_level(tenant.id, product.id) == 1
+
+    completed = await graph.ainvoke(Command(resume={"approved": True}), config=config)
+
+    assert "created successfully" in completed["final_response"]
+    assert InventoryService(session).get_level(tenant.id, product.id) == -1
+
+
+@pytest.mark.asyncio
 async def test_finance_records_expense_only_after_verified_tool_result(
     session: Session, tenants: tuple[Tenant, Tenant]
 ) -> None:
@@ -239,24 +315,6 @@ async def test_finance_derives_current_month_deterministically(
     update = await node(_state(tenant, "finance", "Show this month's summary"))
 
     assert "expenses: 25.00" in _result(update).response
-
-
-@pytest.mark.asyncio
-async def test_large_expense_is_not_executed_before_m6(
-    tenants: tuple[Tenant, Tenant]
-) -> None:
-    tenant, _ = tenants
-    node = make_finance_specialist(
-        FixedPlanner(FinancePlan(
-            action="create_expense", amount=Decimal("1001.00"), description="Equipment"
-        )),
-        lambda tenant_id, specialist: InvalidOutputClient(),
-    )
-
-    update = await node(_state(tenant, "finance", "Record equipment expense"))
-
-    assert _result(update).error == "HITL_NOT_IMPLEMENTED"
-    assert cast(list[object], update["tool_results"]) == []
 
 
 class InvalidOutputClient:

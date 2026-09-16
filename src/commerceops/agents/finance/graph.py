@@ -6,9 +6,10 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from commerceops.agents.planning import FinancePlan, PlanProvider
-from commerceops.agents.runtime import ToolClientFactory, verified_call
+from commerceops.agents.runtime import ToolClientFactory, create_tool_client, verified_call
 from commerceops.config import settings
-from commerceops.graph.state import AgentState, SpecialistResult
+from commerceops.graph.policy import PolicyContext, propose_action, require_policy_approval
+from commerceops.graph.state import AgentState, ProposedAction, SpecialistResult
 from commerceops.mcp.context import Specialist
 from commerceops.mcp.tools.schemas import (
     FinancialSummaryData,
@@ -21,12 +22,14 @@ from commerceops.mcp.tools.schemas import (
 def _finish(
     state: AgentState, response: str, records: list[dict[str, object]] | None = None,
     error: str | None = None,
+    actions: list[ProposedAction] | None = None,
 ) -> dict[str, object]:
     task = state["specialist_task"]
     return {"specialist_results": [SpecialistResult(
         task_index=state["task_index"], agent="finance", query=task.query,
         response=response, error=error,
-    )], "tool_results": records or [], "resolved_entities": []}
+    )], "tool_results": records or [], "resolved_entities": [],
+        "proposed_actions": actions or []}
 
 
 def _message(result: ToolResult) -> str:
@@ -63,7 +66,7 @@ def make_finance_specialist(
                            error="FINANCE_PLANNING_FAILED")
         if plan.action == "clarify":
             return _finish(state, plan.clarification or "Please clarify the Finance request.")
-        client = client_factory(tenant_id, Specialist.FINANCE)
+        client = create_tool_client(client_factory, tenant_id, Specialist.FINANCE)
 
         if plan.action == "summary":
             period = _resolve_period(plan)
@@ -95,17 +98,32 @@ def make_finance_specialist(
         if plan.action == "create_expense":
             if plan.amount is None or plan.amount <= 0 or not plan.description:
                 return _finish(state, "Please provide a positive amount and expense description.")
-            if plan.amount > settings.large_transaction_amount:
-                return _finish(state, "This large transaction requires M6 approval.",
-                               error="HITL_NOT_IMPLEMENTED")
-            data, result, record = await verified_call(client, "create_transaction", {
+            arguments = {
                 "type": "EXPENSE", "amount": str(plan.amount),
                 "description": plan.description, "order_id": None,
-            }, TransactionResultData)
+            }
+            action = propose_action("create_transaction", arguments)
+            decision, approved = require_policy_approval(
+                action, PolicyContext(str(tenant_id), Specialist.FINANCE)
+            )
+            if not decision.allowed:
+                return _finish(
+                    state, decision.reason, error="POLICY_DENIED", actions=[action]
+                )
+            if not approved:
+                return _finish(
+                    state, "The transaction was rejected and was not executed.",
+                    error="ACTION_REJECTED", actions=[action],
+                )
+            data, result, record = await verified_call(
+                client, "create_transaction", arguments, TransactionResultData
+            )
             if not isinstance(data, TransactionResultData):
-                return _finish(state, _message(result), [record], "TOOL_FAILED")
+                return _finish(
+                    state, _message(result), [record], "TOOL_FAILED", [action]
+                )
             return _finish(state, f"Expense transaction {data.transaction.id} was recorded "
-                           "successfully.", [record])
+                           "successfully.", [record], actions=[action])
         return _finish(state, "The requested Finance operation is not supported.")
 
     return finance_specialist

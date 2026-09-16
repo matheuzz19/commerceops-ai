@@ -4,8 +4,14 @@ from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from commerceops.agents.planning import PlanProvider, SalesPlan
-from commerceops.agents.runtime import ToolCaller, ToolClientFactory, verified_call
-from commerceops.graph.state import AgentState, ResolvedEntity, SpecialistResult
+from commerceops.agents.runtime import (
+    ToolCaller,
+    ToolClientFactory,
+    create_tool_client,
+    verified_call,
+)
+from commerceops.graph.policy import PolicyContext, propose_action, require_policy_approval
+from commerceops.graph.state import AgentState, ProposedAction, ResolvedEntity, SpecialistResult
 from commerceops.mcp.context import Specialist
 from commerceops.mcp.tools.schemas import (
     CustomerResultData,
@@ -27,6 +33,7 @@ def _finish(
     *,
     records: list[dict[str, object]] | None = None,
     entities: list[ResolvedEntity] | None = None,
+    actions: list[ProposedAction] | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     task = state["specialist_task"]
@@ -39,6 +46,7 @@ def _finish(
         ],
         "tool_results": records or [],
         "resolved_entities": entities or [],
+        "proposed_actions": actions or [],
     }
 
 
@@ -102,7 +110,7 @@ def make_sales_specialist(
             return _finish(state, "I could not understand the Sales request safely.",
                            error="SALES_PLANNING_FAILED")
 
-        client = client_factory(tenant_id, Specialist.SALES)
+        client = create_tool_client(client_factory, tenant_id, Specialist.SALES)
         records: list[dict[str, object]] = []
         entities: list[ResolvedEntity] = []
         if plan.action == "clarify":
@@ -129,15 +137,30 @@ def make_sales_specialist(
         if plan.action == "create_customer":
             if not plan.customer_name:
                 return _finish(state, "Please provide the new customer's name.")
-            data, result, record = await verified_call(client, "create_customer", {
+            customer_arguments: dict[str, object] = {
                 "name": plan.customer_name, "email": plan.email, "phone": plan.phone,
-            }, CustomerResultData)
+            }
+            action = propose_action("create_customer", customer_arguments)
+            decision, approved = require_policy_approval(
+                action, PolicyContext(str(tenant_id), Specialist.SALES)
+            )
+            if not decision.allowed:
+                return _finish(state, decision.reason, actions=[action], error="POLICY_DENIED")
+            if not approved:
+                return _finish(
+                    state, "The customer creation was rejected and was not executed.",
+                    actions=[action], error="ACTION_REJECTED",
+                )
+            data, result, record = await verified_call(
+                client, "create_customer", customer_arguments, CustomerResultData
+            )
             if not isinstance(data, CustomerResultData):
                 return _finish(
-                    state, _failure_message(result), records=[record], error="TOOL_FAILED"
+                    state, _failure_message(result), records=[record], actions=[action],
+                    error="TOOL_FAILED"
                 )
             return _finish(state, f"Customer {data.customer.name} was created successfully.",
-                           records=[record])
+                           records=[record], actions=[action])
 
         if plan.action == "list_orders":
             arguments: dict[str, object] = {}
@@ -182,24 +205,40 @@ def make_sales_specialist(
                                    entities=entities)
                 entities.append(product)
                 items.append({"product_id": product_id, "quantity": item.quantity})
-            data, result, record = await verified_call(client, "create_order", {
+            create_order_arguments: dict[str, object] = {
                 "customer_id": customer_id, "items": items,
-            }, OrderResultData)
+            }
+            action = propose_action("create_order", create_order_arguments)
+            decision, approved = require_policy_approval(
+                action,
+                PolicyContext(str(tenant_id), Specialist.SALES, entities),
+                proposed_write_count=1 + len(items),
+            )
+            if not decision.allowed:
+                return _finish(
+                    state, decision.reason, records=records, entities=entities,
+                    actions=[action], error="POLICY_DENIED",
+                )
+            if not approved:
+                return _finish(
+                    state, "The order creation was rejected and was not executed.",
+                    records=records, entities=entities, actions=[action],
+                    error="ACTION_REJECTED",
+                )
+            data, result, record = await verified_call(
+                client, "create_order", create_order_arguments, OrderResultData
+            )
             records.append(record)
             if not isinstance(data, OrderResultData):
                 return _finish(state, _failure_message(result), records=records,
-                               entities=entities, error="TOOL_FAILED")
+                               entities=entities, actions=[action], error="TOOL_FAILED")
             return _finish(state, f"Order {data.order.id} was created successfully for "
-                           f"{data.order.total_amount}.", records=records, entities=entities)
+                           f"{data.order.total_amount}.", records=records, entities=entities,
+                           actions=[action])
 
         if plan.action == "update_order":
             if not plan.order_reference or not plan.order_status:
                 return _finish(state, "Please provide the order and its requested status.")
-            if plan.order_status.value == "CANCELLED" or (
-                plan.payment_status and plan.payment_status.value == "REFUNDED"
-            ):
-                return _finish(state, "This high-risk order update requires M6 approval.",
-                               error="HITL_NOT_IMPLEMENTED")
             data, result, record = await verified_call(client, "list_orders", {}, OrderListData)
             records.append(record)
             if not isinstance(data, OrderListData):
@@ -216,15 +255,30 @@ def make_sales_specialist(
             arguments = {"order_id": str(order.id), "status": plan.order_status.value}
             if plan.payment_status:
                 arguments["payment_status"] = plan.payment_status.value
+            action = propose_action("update_order", arguments)
+            decision, approved = require_policy_approval(
+                action, PolicyContext(str(tenant_id), Specialist.SALES, entities)
+            )
+            if not decision.allowed:
+                return _finish(
+                    state, decision.reason, records=records, entities=entities,
+                    actions=[action], error="POLICY_DENIED",
+                )
+            if not approved:
+                return _finish(
+                    state, "The order update was rejected and was not executed.",
+                    records=records, entities=entities, actions=[action],
+                    error="ACTION_REJECTED",
+                )
             updated, update_result, record = await verified_call(
                 client, "update_order", arguments, OrderResultData
             )
             records.append(record)
             if not isinstance(updated, OrderResultData):
                 return _finish(state, _failure_message(update_result), records=records,
-                               entities=entities, error="TOOL_FAILED")
+                               entities=entities, actions=[action], error="TOOL_FAILED")
             return _finish(state, f"Order {updated.order.id} was updated successfully.",
-                           records=records, entities=entities)
+                           records=records, entities=entities, actions=[action])
 
         return _finish(state, "The requested Sales operation is not supported.")
 
