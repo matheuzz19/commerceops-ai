@@ -84,9 +84,46 @@ Compose a success, clarification, or recoverable failure response
 Model output never supplies a trusted write identifier. Sales resolves customers
 and products before creating orders and observes an order through `list_orders`
 before a safe update. Inventory resolves products before stock operations.
-Finance M5 writes are limited to unlinked expenses. High-risk and combined
-cross-specialist writes remain blocked pending M6 policy and HITL controls.
+Finance writes are limited to unlinked expenses in the current planner.
 
 Parallel MCP branches use independent SQLAlchemy sessions. Their tool results
 and resolved entities are reducer-backed state collections, preserving every
 branch without sharing non-thread-safe database sessions.
+
+## M6 Policy and HITL
+
+Specialist write execution now follows this enforced topology:
+
+```text
+Resolve trusted entities
+      |
+      v
+Build ProposedAction
+      |
+      v
+Policy: scope + schema + provenance + batch + risk
+      |
+      +-- denied ------> recoverable policy response
+      +-- high risk ---> LangGraph interrupt
+      |                       |
+      |                 approve / reject
+      |                       |
+      +-- allowed <-----------+
+      |
+      v
+Authorized MCP call
+      |
+      v
+Verified tool result
+```
+
+The API owns checkpoint identity and binds each pending checkpoint to the
+trusted tenant and user headers. A different tenant cannot approve or reject
+the action. M6 uses LangGraph's in-memory checkpointer; Redis durability is an
+explicit M7 responsibility.
+
+Approval state is not added to tool arguments. For the one domain override
+that must cross the MCP boundary—approved negative inventory—the resumed graph
+creates a trusted `ToolRuntimeContext` grant. The executor passes that grant to
+the deterministic service while continuing to reject tenant identity or other
+trust data from model-controlled arguments.
