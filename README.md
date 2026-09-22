@@ -7,10 +7,10 @@ and its MCP boundary: tenant-scoped data access, explicit business rules,
 schema-validated tools, specialist authorization, synthetic fixtures, and
 automated quality gates.
 
-> **Current status:** M1 Foundation through M5 Specialist Workflows are complete. The
-> supervisor uses structured routing and LangGraph `Send` to fan multi-domain
-> requests out to executable specialist workflows in parallel. The public API
-> currently exposes only `GET /health`; policy and HITL controls begin in M6.
+> **Current status:** M1 Foundation through M6 Policy and HITL are complete. The
+> API executes immediate messages, pauses high-risk actions with LangGraph
+> interrupts, and resumes them only through tenant-scoped approval or rejection
+> endpoints. Redis buffering and persistent checkpoints begin in M7.
 
 The authoritative source for requirements and implementation decisions is the
 [CommerceOps AI specification](docs/specs/COMMERCEOPS_AI_SPEC.md).
@@ -61,11 +61,11 @@ M5  Specialist workflows               implemented
     Sales, Inventory, Finance, entity resolution, tool verification
     |
     v
-M6  Policy and HITL                    next
+M6  Policy and HITL                    implemented
     Risk policy, approvals, interrupt and resume
     |
     v
-M7  Buffering and checkpointing        planned
+M7  Buffering and checkpointing        next
     Redis message aggregation and persisted session state
     |
     v
@@ -220,10 +220,23 @@ MCP responses are validated twice: first as the shared tool envelope and then as
 the expected tool-specific data model. Failed calls and malformed success data
 produce recoverable specialist errors and never produce a success claim.
 
-High-risk cancellation/refund operations, large inventory movements, and large
-financial transactions remain blocked until M6 provides checkpointed approval.
-Parallel branches can perform independent reads, but cross-specialist write
-approval and combined policy evaluation also remain M6 responsibilities.
+## M6: Policy and human approval
+
+Every specialist write is converted to a typed `ProposedAction` after required
+entity resolution and before MCP execution. The deterministic policy engine
+validates the trusted tenant context, specialist authorization, tool input
+schema, entity provenance, configured batch limit, and risk classification.
+
+Cancellation and refund-like order updates, large financial transactions,
+large inventory movements, negative-stock movements, and requests proposing
+more than five writes require explicit approval. LangGraph interrupts the
+workflow before the write. Approval resumes the same checkpoint and rejection
+returns a verified non-execution response. Negative stock is permitted only
+when the resumed graph supplies a trusted runtime grant to MCP; that grant is
+never part of model-generated tool arguments.
+
+M6 checkpoints are in-process and intentionally ephemeral. M7 replaces this
+with Redis-backed persistence and adds debounced message aggregation.
 
 ## Implemented backend capabilities
 
@@ -256,9 +269,9 @@ not public FastAPI endpoints yet.
 - Domain failures use explicit error codes such as `CUSTOMER_NOT_FOUND` and
   `INSUFFICIENT_STOCK`.
 
-Specialist tool authorization and schema-validated MCP inputs and outputs are
-implemented. High-risk approval and batch-write enforcement belong to M6 and
-are not runtime controls yet.
+Specialist tool authorization, schema-validated MCP inputs and outputs, risk
+classification, batch enforcement, and approval-before-execution are runtime
+controls implemented in application code.
 
 ## Technology choices
 
@@ -279,7 +292,7 @@ are not runtime controls yet.
 
 ```text
 src/commerceops/
-  api/             FastAPI application; currently the health route
+  api/             FastAPI messages, approval/rejection, and health routes
   domain/          SQLAlchemy models, enums, and invariants
   repositories/    Tenant-scoped PostgreSQL access
   services/        Deterministic business operations
@@ -319,7 +332,7 @@ docker compose run --rm agent-api alembic upgrade head
 docker compose up --build agent-api
 ```
 
-Verify the only current public endpoint:
+Verify the health endpoint:
 
 ```powershell
 Invoke-RestMethod http://localhost:8000/health
@@ -330,6 +343,18 @@ Expected response:
 ```json
 {"status":"ok"}
 ```
+
+Submit an immediate request with trusted development identity headers:
+
+```powershell
+$headers = @{"X-Tenant-ID"="<tenant-uuid>"; "X-User-ID"="operator"}
+$body = @{session_id="demo"; message_id="1"; content="Record a 1200 expense"; debounce=$false} | ConvertTo-Json
+Invoke-RestMethod http://localhost:8000/messages -Method Post -Headers $headers -ContentType "application/json" -Body $body
+```
+
+When the response status is `requires_confirmation`, resume it through
+`POST /confirmations/{checkpoint_id}/approve` or reject it through
+`POST /confirmations/{checkpoint_id}/reject` with the same identity headers.
 
 The `mcp-server` Compose service exposes Streamable HTTP on port `8001`. Tool
 execution requires trusted tenant and specialist context supplied by the
@@ -381,12 +406,15 @@ Current automated coverage includes:
 - Parallel multi-domain `Send` fan-out
 - Deterministic specialist-result aggregation
 - Sales and Inventory update-intent fan-out without writes
+- Policy scope, schema, resolution, threshold, and batch enforcement
+- HITL interrupt, approval resume, rejection, and tenant-scoped checkpoints
+- Approved negative-stock execution through a trusted MCP runtime grant
 - Routing dataset validation and exact agent-set scoring
 
 The verified M1-M4 results are:
 
 ```text
-Complete pytest suite: 45 passed
+Complete pytest suite: 50 passed
 Focused M4 suite:      12 passed
 Focused M5 integration: 10 passed
 Live routing baseline: 41/41 (100%)
@@ -415,23 +443,22 @@ image.
 | M3 | MCP server/client, tool schemas, authorization matrix, contract tests | Complete |
 | M4 | Typed state, parallel routing, general node, specialist skeletons | Complete |
 | M5 | Specialist workflows, entity resolution, tool-result verification | Complete |
-| M6 | Policy engine and human-in-the-loop approval | Next |
-| M7 | Redis buffering and checkpoint persistence | Planned |
+| M6 | Policy engine and human-in-the-loop approval | Complete |
+| M7 | Redis buffering and checkpoint persistence | Next |
 | M8 | Agent evals, tracing, structured logs, and metrics | Planned |
 | M9 | Deployment and portfolio packaging | Planned |
 
 ## Current limitations and non-goals
 
-- The API does not yet expose commerce workflows.
-- High-risk and combined multi-specialist writes are intentionally blocked until
-  M6 adds policy evaluation, confirmation, interrupt, and resume behavior.
+- The API currently executes immediate messages only; `debounce=true` is
+  rejected until M7 implements Redis aggregation.
 - Redis is available in Compose but is not connected to message buffering or
   checkpoints.
 - M4 routing evaluations and LangSmith traces are implemented. Comprehensive
   workflow evaluation, application metrics, token/cost reporting, and production
   observability remain part of M8.
-- HITL, approval endpoints, Redis buffering, and persistent graph checkpoints
-  remain future milestones.
+- HITL and approval endpoints are implemented with process-local checkpoints;
+  checkpoint durability and session-state inspection remain M7 work.
 - The MVP deliberately excludes a frontend, mobile app, WhatsApp, Kafka,
   Kubernetes, RAG, and integrations with real business systems.
 
