@@ -7,10 +7,10 @@ and its MCP boundary: tenant-scoped data access, explicit business rules,
 schema-validated tools, specialist authorization, synthetic fixtures, and
 automated quality gates.
 
-> **Current status:** M1 Foundation through M6 Policy and HITL are complete. The
-> API executes immediate messages, pauses high-risk actions with LangGraph
-> interrupts, and resumes them only through tenant-scoped approval or rejection
-> endpoints. Redis buffering and persistent checkpoints begin in M7.
+> **Current status:** M1 Foundation through M7 Buffering and Checkpointing are complete.
+> The API aggregates debounced text in Redis, persists tenant-scoped session
+> state and checkpoints, and resumes high-risk actions through trusted approval
+> endpoints even after an API restart. Testing, evals and observability are next in M8.
 
 The authoritative source for requirements and implementation decisions is the
 [CommerceOps AI specification](docs/specs/COMMERCEOPS_AI_SPEC.md).
@@ -65,11 +65,11 @@ M6  Policy and HITL                    implemented
     Risk policy, approvals, interrupt and resume
     |
     v
-M7  Buffering and checkpointing        next
+M7  Buffering and checkpointing        implemented
     Redis message aggregation and persisted session state
     |
     v
-M8  Testing, evals, observability      planned
+M8  Testing, evals, observability      next
     Agent evaluation, traces, structured logs, metrics
     |
     v
@@ -78,8 +78,7 @@ M9  Deployment and portfolio packaging planned
 ```
 
 The target runtime flow is FastAPI -> LangGraph -> policy -> MCP -> deterministic
-services -> PostgreSQL. Redis supports buffering and checkpointing when M7 is
-implemented.
+services -> PostgreSQL. Redis persists buffering, checkpoints, session ownership, and message receipts.
 
 ## M4: LangGraph multi-agent routing core
 
@@ -235,8 +234,41 @@ returns a verified non-execution response. Negative stock is permitted only
 when the resumed graph supplies a trusted runtime grant to MCP; that grant is
 never part of model-generated tool arguments.
 
+Write preparation and policy evaluation now checkpoint before the dedicated
+review node. Resuming approval executes the captured arguments without calling
+the planner or resolving entities again. Multi-department write proposals are
+reviewed together before any business write; rejection prevents the whole
+proposed batch from executing.
+
+Approval handles are consumed atomically, scoped to the tenant and user, and
+cannot be replayed by competing HTTP requests. The API exposes all pending
+interrupt IDs and resumes them with explicit ID-scoped decisions. Per-request
+collections use `Overwrite` when a thread is reused. See
+[ADR 0006](docs/decisions/0006-stable-action-review.md) for the guarantees and limits.
+
 M6 checkpoints are in-process and intentionally ephemeral. M7 replaces this
 with Redis-backed persistence and adds debounced message aggregation.
+
+## M7: Buffering and checkpointing
+
+`debounce=true` stores text fragments in a tenant/session buffer until the
+configured window expires. The API lifespan worker aggregates them into one
+graph execution and preserves all source message IDs. `debounce=false` runs
+immediately and flushes any earlier text fragments in that session.
+
+Graph checkpoints, pending approvals, ownership, receipts, and session results
+are stored in Redis. Renewable leases serialize work across runtime instances,
+and token-checked metadata updates reject stale owners. Repeated message IDs
+return their saved response; changed content under an existing ID is rejected.
+
+`GET /sessions/{session_id}/state` exposes the current result and persisted graph
+state only to the owning tenant and user. Restarted workers recover saved
+outcomes and approvals; unfinished possible writes require inspection and are
+never replayed automatically. Redis uses AOF persistence and a named volume.
+
+M7 verification: **83 tests passed**, including **17 new buffer/Redis tests**.
+See the [manual test guide](docs/m7-manual-test.md) and
+[ADR 0007](docs/decisions/0007-redis-conversation-durability.md).
 
 ## Implemented backend capabilities
 
@@ -280,7 +312,7 @@ controls implemented in application code.
 | Python 3.11+ and FastAPI | Typed application code and HTTP boundary |
 | SQLAlchemy 2 and Alembic | ORM persistence and versioned schema migrations |
 | PostgreSQL 16 | Business data and PostgreSQL-backed verification |
-| Redis 7 | Provisioned locally for future buffering and checkpoints |
+| Redis 7 | Buffers, checkpoints, receipts, ownership, and execution leases |
 | LangChain and LangGraph | Structured routing, dynamic `Send` fan-out, parallel workers, and deterministic aggregation |
 | MCP | Schema-validated, specialist-authorized business tool boundary |
 | LangSmith | M4 router traces and live evaluation diagnostics |
@@ -383,10 +415,11 @@ SQLite and any database not named `commerceops_test`, reducing the risk of
 running destructive schema setup against a development database.
 
 ```powershell
-docker compose --profile test up -d postgres-test
+docker compose --profile test up -d postgres-test redis-test
 $env:TEST_DATABASE_URL = "postgresql+psycopg://commerceops:commerceops@localhost:5433/commerceops_test"
+$env:TEST_REDIS_URL = "redis://localhost:6380/15"
 python -m pytest tests/unit tests/integration tests/contract tests/evals
-docker compose --profile test stop postgres-test
+docker compose --profile test stop postgres-test redis-test
 ```
 
 Current automated coverage includes:
@@ -422,6 +455,12 @@ Ruff:                  passed
 Strict mypy:           passed
 ```
 
+The M6 corrective verification passed **66 tests**, including PostgreSQL-backed
+workflows and 16 approval/state regression cases. Ruff, strict Mypy, and the
+Docker build also passed. Regression coverage includes changed planner outputs,
+rejection, concurrent approvals, multi-action review, total batch limits,
+interrupt ID mapping, single-use handles, and state reset across requests.
+
 Run the remaining CI checks locally:
 
 ```powershell
@@ -444,21 +483,20 @@ image.
 | M4 | Typed state, parallel routing, general node, specialist skeletons | Complete |
 | M5 | Specialist workflows, entity resolution, tool-result verification | Complete |
 | M6 | Policy engine and human-in-the-loop approval | Complete |
-| M7 | Redis buffering and checkpoint persistence | Next |
-| M8 | Agent evals, tracing, structured logs, and metrics | Planned |
+| M7 | Redis buffering and checkpoint persistence | Complete |
+| M8 | Agent evals, tracing, structured logs, and metrics | Next |
 | M9 | Deployment and portfolio packaging | Planned |
 
 ## Current limitations and non-goals
 
-- The API currently executes immediate messages only; `debounce=true` is
-  rejected until M7 implements Redis aggregation.
-- Redis is available in Compose but is not connected to message buffering or
-  checkpoints.
+- Debounce aggregation currently supports text; media preprocessing remains outside M7.
+- Redis durability uses one instance with AOF. High-availability failover, automatic
+  retention, and cross-store exactly-once execution are not implemented.
 - M4 routing evaluations and LangSmith traces are implemented. Comprehensive
   workflow evaluation, application metrics, token/cost reporting, and production
   observability remain part of M8.
-- HITL and approval endpoints are implemented with process-local checkpoints;
-  checkpoint durability and session-state inspection remain M7 work.
+- Interrupted possible writes require inspection. Recovery does not automatically
+  replay write nodes, and separate approved tools do not share a rollback boundary.
 - The MVP deliberately excludes a frontend, mobile app, WhatsApp, Kafka,
   Kubernetes, RAG, and integrations with real business systems.
 
@@ -469,6 +507,7 @@ image.
 - [Development guide](docs/development.md)
 - [Evaluation plan](docs/evaluation.md)
 - [Operations notes](docs/operations.md)
+- [M7 manual test guide](docs/m7-manual-test.md)
 - [Architecture decisions](docs/decisions/)
 
 This repository is a sanitized implementation. It must contain only synthetic

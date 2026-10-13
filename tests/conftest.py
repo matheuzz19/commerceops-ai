@@ -1,7 +1,10 @@
 import os
 from collections.abc import Generator
+from urllib.parse import urlparse
+from uuid import uuid4
 
 import pytest
+from redis import Redis
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
@@ -34,3 +37,20 @@ def session() -> Generator[Session, None, None]:
 @pytest.fixture
 def tenants(session: Session) -> tuple[Tenant, Tenant]:
     return tuple(session.query(Tenant).order_by(Tenant.name).all())  # type: ignore[return-value]
+
+
+@pytest.fixture
+def redis_context() -> Generator[tuple[Redis, str], None, None]:
+    url = os.environ.get("TEST_REDIS_URL")
+    if url is None or urlparse(url).path != "/15":
+        pytest.fail("TEST_REDIS_URL must point to isolated Redis database 15.")
+    client = Redis.from_url(url, socket_connect_timeout=3, socket_timeout=3)
+    client.ping()
+    prefix = "commerceops:test:" + uuid4().hex
+    try:
+        yield client, prefix
+    finally:
+        keys = list(client.scan_iter(match=prefix + ":*"))
+        if keys:
+            client.delete(*keys)
+        client.close()

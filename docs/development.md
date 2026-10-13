@@ -15,6 +15,9 @@ python -m pip install -e ".[dev]"
 ```powershell
 ruff check .
 mypy src
+docker compose --profile test up -d postgres-test redis-test
+$env:TEST_DATABASE_URL = "postgresql+psycopg://commerceops:commerceops@localhost:5433/commerceops_test"
+$env:TEST_REDIS_URL = "redis://localhost:6380/15"
 pytest tests/unit tests/integration tests/contract tests/evals
 docker build --pull --tag commerceops-ai:ci .
 ```
@@ -38,4 +41,6 @@ Follow the milestone order from the spec. Do not start LangGraph specialist beha
 docker compose up --build
 ```
 
-The initial scaffold defines `agent-api`, `mcp-server`, `postgres`, and `redis`. The MCP server command is intentionally a placeholder until M3.
+The stack defines `agent-api`, `mcp-server`, `postgres`, and persistent `redis`.
+M7 adds Redis-backed message buffering, graph checkpoints, session inspection,
+and a lifespan worker. See `docs/m7-manual-test.md` for manual verification.

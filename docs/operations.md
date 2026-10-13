@@ -20,8 +20,10 @@ Invoke-RestMethod http://localhost:8000/health
 
 ## Immediate Messages and Approval
 
-`POST /messages` requires `X-Tenant-ID` and `X-User-ID`. M6 supports
-`debounce=false`; Redis-backed buffering arrives in M7.
+`POST /messages` requires `X-Tenant-ID` and `X-User-ID`. `debounce=false`
+executes immediately; `debounce=true` queues text fragments in Redis until the
+configured debounce window expires. A lifespan worker processes due sessions.
+Inspect the result with `GET /sessions/{session_id}/state` using the same headers.
 
 High-risk responses include a `checkpoint_id` and the status
 `requires_confirmation`. Send the same trusted headers to one of:
@@ -31,8 +33,32 @@ POST /confirmations/{checkpoint_id}/approve
 POST /confirmations/{checkpoint_id}/reject
 ```
 
-M6 checkpoints are process-local. Restarting the API invalidates pending
-approvals; persistent checkpoint recovery is an M7 feature.
+For one action, the confirmation retains its `action` field. Multi-action
+requests expose an `actions` list; approval or rejection applies to the entire
+list. If there are multiple graph interrupts, `confirmation.interrupts` includes
+every `interrupt_id` and its payload, and the endpoint applies the decision to
+all of them.
+
+An approval handle is consumed before resume. Unauthorized and already-consumed
+handles return 404; a competing request can return 409 while the session is busy.
+If resume reaches another interrupt, use
+the new `checkpoint_id` returned by the API. An uncertain execution failure
+returns `failed` and consumes the handle; inspect the business operation before
+submitting a replacement request.
+
+M7 stores graph checkpoints, ownership, buffers, message receipts, and session
+results in Redis. Pending confirmations survive API restarts. Redis uses AOF
+with `appendfsync always` and the `redis_data` volume. A tenant/session pair has
+one owner and one active execution lease; unresolved confirmations block new
+messages in that session. Reusing a message ID returns the saved receipt;
+reusing it with different content returns `MESSAGE_ID_CONFLICT`.
+
+An unfinished possible write is not automatically replayed after recovery.
+It returns `EXECUTION_INTERRUPTED` and requires inspection. A Redis outage
+returns HTTP 503 with `STATE_STORE_UNAVAILABLE`; a busy session returns 409.
+
+See [M7 manual verification](m7-manual-test.md) for PowerShell examples and
+[ADR 0007](decisions/0007-redis-conversation-durability.md) for durability limits.
 
 ## Secrets
 

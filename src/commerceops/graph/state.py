@@ -15,6 +15,7 @@ class NormalizedMessage(BaseModel):
     content: str = Field(min_length=1)
     content_type: Literal["text", "audio", "image", "document"] = "text"
     timestamp: datetime
+    source_message_ids: list[str] = Field(default_factory=list)
 
 
 class RouteDecision(BaseModel):
@@ -96,6 +97,9 @@ class AgentState(TypedDict, total=False):
     content: str
     content_type: Literal["text", "audio", "image", "document"]
     timestamp: datetime
+
+    source_message_ids: list[str]
+    execution_id: str
 
     # Normalized routing state.
     messages: list[Any]

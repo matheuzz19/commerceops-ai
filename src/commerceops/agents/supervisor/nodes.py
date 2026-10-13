@@ -18,6 +18,7 @@ def normalize_message(state: AgentState) -> dict[str, object]:
         content=state["content"].strip(),
         content_type=state.get("content_type", "text"),
         timestamp=state.get("timestamp", datetime.now(UTC)),
+        source_message_ids=state.get("source_message_ids", [state["message_id"]]),
     )
     return {
         "tenant_id": message.tenant_id,

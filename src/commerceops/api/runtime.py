@@ -8,7 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from commerceops.agents.supervisor.graph import create_supervisor_graph
-from commerceops.api.schemas import MessageRequest, MessageResponse
+from commerceops.api.schemas import MessageRequest, MessageResponse, SessionStateResponse
 from commerceops.graph.checkpoints import PendingCheckpoint, PendingCheckpointStore
 
 
@@ -18,8 +18,15 @@ class ConversationRuntime:
         graph: Any | None = None,
         pending: PendingCheckpointStore | None = None,
     ) -> None:
-        self.graph = graph or create_supervisor_graph(checkpointer=InMemorySaver())
+        self._graph = graph
+        self.checkpointer: Any = InMemorySaver()
         self.pending = pending or PendingCheckpointStore()
+
+    @property
+    def graph(self) -> Any:
+        if self._graph is None:
+            self._graph = create_supervisor_graph(checkpointer=self.checkpointer)
+        return self._graph
 
     async def submit(
         self, request: MessageRequest, tenant_id: str, user_id: str
@@ -41,6 +48,11 @@ class ConversationRuntime:
         return self._response(
             result, trace_id, checkpoint_id, tenant_id, user_id, config
         )
+
+    async def session_state(
+        self, session_id: str, tenant_id: str, user_id: str,
+    ) -> SessionStateResponse | None:
+        return None
 
     async def resume(
         self,
@@ -118,4 +130,6 @@ class ConversationRuntime:
 
 @lru_cache
 def get_conversation_runtime() -> ConversationRuntime:
-    return ConversationRuntime()
+    from commerceops.api.redis_runtime import RedisConversationRuntime
+
+    return RedisConversationRuntime()

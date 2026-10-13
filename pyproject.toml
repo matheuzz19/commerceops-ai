@@ -18,6 +18,7 @@ dependencies = [
   "psycopg[binary]>=3.2.0",
   "redis>=5.0.0",
   "langgraph>=1.0.0,<2.0.0",
+  "langgraph-checkpoint>=4.0.0,<5.0.0",
   "langchain-openai>=0.1.0",
   "mcp>=2.0.0,<3.0.0",
 ]
