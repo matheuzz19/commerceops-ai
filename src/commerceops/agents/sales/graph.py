@@ -10,14 +10,13 @@ from commerceops.agents.runtime import (
     create_tool_client,
     verified_call,
 )
-from commerceops.graph.policy import PolicyContext, propose_action, require_policy_approval
+from commerceops.agents.workflow import prepare_write, standalone_specialist
+from commerceops.graph.policy import propose_action
 from commerceops.graph.state import AgentState, ProposedAction, ResolvedEntity, SpecialistResult
 from commerceops.mcp.context import Specialist
 from commerceops.mcp.tools.schemas import (
-    CustomerResultData,
     CustomerSearchData,
     OrderListData,
-    OrderResultData,
     ProductSearchData,
     ToolResult,
 )
@@ -96,7 +95,7 @@ async def _resolve_product(
     ), record, None
 
 
-def make_sales_specialist(
+def make_sales_preparer(
     planner: PlanProvider[SalesPlan], client_factory: ToolClientFactory
 ) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
     async def sales_specialist(state: AgentState) -> dict[str, object]:
@@ -141,26 +140,7 @@ def make_sales_specialist(
                 "name": plan.customer_name, "email": plan.email, "phone": plan.phone,
             }
             action = propose_action("create_customer", customer_arguments)
-            decision, approved = require_policy_approval(
-                action, PolicyContext(str(tenant_id), Specialist.SALES)
-            )
-            if not decision.allowed:
-                return _finish(state, decision.reason, actions=[action], error="POLICY_DENIED")
-            if not approved:
-                return _finish(
-                    state, "The customer creation was rejected and was not executed.",
-                    actions=[action], error="ACTION_REJECTED",
-                )
-            data, result, record = await verified_call(
-                client, "create_customer", customer_arguments, CustomerResultData
-            )
-            if not isinstance(data, CustomerResultData):
-                return _finish(
-                    state, _failure_message(result), records=[record], actions=[action],
-                    error="TOOL_FAILED"
-                )
-            return _finish(state, f"Customer {data.customer.name} was created successfully.",
-                           records=[record], actions=[action])
+            return prepare_write(state, action)
 
         if plan.action == "list_orders":
             arguments: dict[str, object] = {}
@@ -209,32 +189,10 @@ def make_sales_specialist(
                 "customer_id": customer_id, "items": items,
             }
             action = propose_action("create_order", create_order_arguments)
-            decision, approved = require_policy_approval(
-                action,
-                PolicyContext(str(tenant_id), Specialist.SALES, entities),
-                proposed_write_count=1 + len(items),
+            return prepare_write(
+                state, action, records=records, entities=entities,
+                write_count=1 + len(items),
             )
-            if not decision.allowed:
-                return _finish(
-                    state, decision.reason, records=records, entities=entities,
-                    actions=[action], error="POLICY_DENIED",
-                )
-            if not approved:
-                return _finish(
-                    state, "The order creation was rejected and was not executed.",
-                    records=records, entities=entities, actions=[action],
-                    error="ACTION_REJECTED",
-                )
-            data, result, record = await verified_call(
-                client, "create_order", create_order_arguments, OrderResultData
-            )
-            records.append(record)
-            if not isinstance(data, OrderResultData):
-                return _finish(state, _failure_message(result), records=records,
-                               entities=entities, actions=[action], error="TOOL_FAILED")
-            return _finish(state, f"Order {data.order.id} was created successfully for "
-                           f"{data.order.total_amount}.", records=records, entities=entities,
-                           actions=[action])
 
         if plan.action == "update_order":
             if not plan.order_reference or not plan.order_status:
@@ -256,30 +214,16 @@ def make_sales_specialist(
             if plan.payment_status:
                 arguments["payment_status"] = plan.payment_status.value
             action = propose_action("update_order", arguments)
-            decision, approved = require_policy_approval(
-                action, PolicyContext(str(tenant_id), Specialist.SALES, entities)
-            )
-            if not decision.allowed:
-                return _finish(
-                    state, decision.reason, records=records, entities=entities,
-                    actions=[action], error="POLICY_DENIED",
-                )
-            if not approved:
-                return _finish(
-                    state, "The order update was rejected and was not executed.",
-                    records=records, entities=entities, actions=[action],
-                    error="ACTION_REJECTED",
-                )
-            updated, update_result, record = await verified_call(
-                client, "update_order", arguments, OrderResultData
-            )
-            records.append(record)
-            if not isinstance(updated, OrderResultData):
-                return _finish(state, _failure_message(update_result), records=records,
-                               entities=entities, actions=[action], error="TOOL_FAILED")
-            return _finish(state, f"Order {updated.order.id} was updated successfully.",
-                           records=records, entities=entities, actions=[action])
+            return prepare_write(state, action, records=records, entities=entities)
 
         return _finish(state, "The requested Sales operation is not supported.")
 
     return sales_specialist
+
+
+def make_sales_specialist(
+    planner: PlanProvider[SalesPlan], client_factory: ToolClientFactory
+) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
+    return standalone_specialist(
+        make_sales_preparer(planner, client_factory), client_factory, "sales"
+    )

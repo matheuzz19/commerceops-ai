@@ -6,7 +6,6 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 from uuid import UUID
 
-from langgraph.types import interrupt
 from pydantic import BaseModel, ValidationError
 
 from commerceops.config import settings
@@ -216,33 +215,6 @@ def evaluate_batch(
         reason="The proposed action batch is allowed.",
         violations=[],
     )
-
-
-def require_policy_approval(
-    action: ProposedAction,
-    context: PolicyContext,
-    *,
-    proposed_write_count: int = 1,
-) -> tuple[PolicyDecision, bool]:
-    """Evaluate an action and pause the graph when explicit approval is required."""
-
-    decision = evaluate_policy(action, context, proposed_write_count=proposed_write_count)
-    if not decision.allowed:
-        return decision, False
-    if not decision.requires_confirmation:
-        return decision, True
-
-    response = interrupt(
-        {
-            "message": "Please approve this action.",
-            "action": action.model_dump(mode="json"),
-            "risk_reason": decision.reason,
-        }
-    )
-    approved = response is True or (
-        isinstance(response, Mapping) and response.get("approved") is True
-    )
-    return decision, approved
 
 
 def approval_grants(

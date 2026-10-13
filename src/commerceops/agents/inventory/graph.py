@@ -5,18 +5,13 @@ from uuid import UUID
 
 from commerceops.agents.planning import InventoryPlan, PlanProvider
 from commerceops.agents.runtime import ToolClientFactory, create_tool_client, verified_call
-from commerceops.graph.policy import (
-    PolicyContext,
-    approval_grants,
-    propose_action,
-    require_policy_approval,
-)
+from commerceops.agents.workflow import prepare_write, standalone_specialist
+from commerceops.graph.policy import propose_action
 from commerceops.graph.state import AgentState, ProposedAction, ResolvedEntity, SpecialistResult
 from commerceops.mcp.context import Specialist
 from commerceops.mcp.tools.schemas import (
     InventoryLevelData,
     InventoryMovementListData,
-    InventoryMovementResultData,
     ProductSearchData,
     ToolResult,
 )
@@ -42,7 +37,7 @@ def _finish(
     }
 
 
-def make_inventory_specialist(
+def make_inventory_preparer(
     planner: PlanProvider[InventoryPlan], client_factory: ToolClientFactory
 ) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
     async def inventory_specialist(state: AgentState) -> dict[str, object]:
@@ -140,43 +135,20 @@ def make_inventory_specialist(
                 "create_inventory_movement", movement_arguments,
                 available_quantity=available_quantity,
             )
-            context = PolicyContext(
-                str(tenant_id), Specialist.INVENTORY, entities, available_quantity
+            return prepare_write(
+                state, action, records=records, entities=entities,
+                available_quantity=available_quantity,
             )
-            decision, approved = require_policy_approval(action, context)
-            if not decision.allowed:
-                return _finish(
-                    state, decision.reason, records, entities, "POLICY_DENIED", [action]
-                )
-            if not approved:
-                return _finish(
-                    state, "The inventory movement was rejected and was not executed.",
-                    records, entities, "ACTION_REJECTED", [action]
-                )
-            grants = approval_grants(action, available_quantity=available_quantity)
-            if grants:
-                client = create_tool_client(
-                    client_factory, tenant_id, Specialist.INVENTORY, grants
-                )
-            data, result, record = await verified_call(
-                client,
-                "create_inventory_movement",
-                movement_arguments,
-                InventoryMovementResultData,
-            )
-            records.append(record)
-            if not isinstance(data, InventoryMovementResultData):
-                return _finish(
-                    state, _message(result), records, entities, "TOOL_FAILED", [action]
-                )
-            return _finish(
-                state,
-                f"Inventory movement {data.movement.id} was created successfully.",
-                records,
-                entities,
-                actions=[action],
-            )
+
         return _finish(state, "The requested Inventory operation is not supported.", records,
                        entities)
 
     return inventory_specialist
+
+
+def make_inventory_specialist(
+    planner: PlanProvider[InventoryPlan], client_factory: ToolClientFactory
+) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
+    return standalone_specialist(
+        make_inventory_preparer(planner, client_factory), client_factory, "inventory"
+    )

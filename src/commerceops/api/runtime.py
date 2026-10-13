@@ -50,27 +50,28 @@ class ConversationRuntime:
         *,
         approved: bool,
     ) -> MessageResponse | None:
-        checkpoint = self.pending.get(checkpoint_id)
+        checkpoint = self.pending.claim(checkpoint_id, tenant_id, user_id)
         if checkpoint is None:
             return None
-        if checkpoint.tenant_id != tenant_id or checkpoint.user_id != user_id:
-            return None
-
         trace_id = str(uuid4())
-        result = await self.graph.ainvoke(
-            Command(resume={"approved": approved}), config=checkpoint.config
+        # Every exposed interrupt receives an explicit, ID-scoped decision.
+        resume_values = {
+            interrupt_id: {"approved": approved} for interrupt_id in checkpoint.interrupt_ids
+        }
+        try:
+            result = await self.graph.ainvoke(
+                Command(resume=resume_values), config=checkpoint.config
+            )
+        except Exception:
+            # The write may have reached the service. Never replay an uncertain write.
+            return MessageResponse(
+                status="failed", response="The approval could not be completed safely. "
+                "Please inspect the operation before submitting another request.",
+                checkpoint_id=None, trace_id=trace_id,
+            )
+        return self._response(
+            result, trace_id, str(uuid4()), tenant_id, user_id, checkpoint.config
         )
-        response = self._response(
-            result,
-            trace_id,
-            checkpoint_id,
-            tenant_id,
-            user_id,
-            checkpoint.config,
-        )
-        if response.status != "requires_confirmation":
-            self.pending.remove(checkpoint_id)
-        return response
 
     def _response(
         self,
@@ -83,10 +84,21 @@ class ConversationRuntime:
     ) -> MessageResponse:
         interrupts = result.get("__interrupt__", ())
         if interrupts:
-            confirmation = interrupts[0].value
-            self.pending.put(
-                PendingCheckpoint(checkpoint_id, tenant_id, user_id, config)
-            )
+            entries = [
+                {"interrupt_id": item.id, "payload": item.value} for item in interrupts
+            ]
+            if len(entries) == 1:
+                confirmation = dict(interrupts[0].value)
+                confirmation["interrupt_id"] = interrupts[0].id
+            else:
+                confirmation = {
+                    "message": "Please approve or reject all pending actions.",
+                    "interrupts": entries,
+                }
+            self.pending.put(PendingCheckpoint(
+                checkpoint_id, tenant_id, user_id, config,
+                tuple(item.id for item in interrupts),
+            ))
             return MessageResponse(
                 status="requires_confirmation",
                 response=str(confirmation.get("message", "Approval is required.")),

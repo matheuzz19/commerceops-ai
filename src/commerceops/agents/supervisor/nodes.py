@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime
 
+from langgraph.types import Overwrite
+
 from commerceops.graph.state import AgentState, NormalizedMessage
 
 
@@ -22,10 +24,15 @@ def normalize_message(state: AgentState) -> dict[str, object]:
         "user_id": message.user_id,
         "session_id": message.session_id,
         "normalized_message": message,
-        "specialist_results": [],
-        "resolved_entities": [],
-        "proposed_actions": [],
-        "tool_results": [],
+        "specialist_results": Overwrite([]),
+        "resolved_entities": Overwrite([]),
+        "proposed_actions": Overwrite([]),
+        "tool_results": Overwrite([]),
+        "prepared_writes": Overwrite([]),
+        "writes_approved": False,
+        "write_policy_error": None,
+        "requires_confirmation": False,
+        "confirmation_request": None,
         "final_response": None,
         "error": None,
     }

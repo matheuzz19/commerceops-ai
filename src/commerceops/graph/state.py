@@ -69,6 +69,18 @@ class ProposedAction(BaseModel):
     requires_confirmation: bool
 
 
+class PreparedWrite(BaseModel):
+    """Resolved write proposal captured before approval and execution."""
+
+    task_index: int = Field(ge=0)
+    agent: Literal["sales", "inventory", "finance"]
+    query: str
+    action: ProposedAction
+    resolved_entities: list[ResolvedEntity] = Field(default_factory=list)
+    available_quantity: int | None = None
+    write_count: int = Field(default=1, ge=1)
+
+
 class AgentState(TypedDict, total=False):
     """Shared graph state.
 
@@ -100,6 +112,9 @@ class AgentState(TypedDict, total=False):
     proposed_actions: Annotated[list[ProposedAction], operator.add]
     tool_results: Annotated[list[dict[str, Any]], operator.add]
     requires_confirmation: bool
+    prepared_writes: Annotated[list[PreparedWrite], operator.add]
+    writes_approved: bool
+    write_policy_error: str | None
     confirmation_request: dict[str, Any] | None
     error: str | None
     final_response: str | None
