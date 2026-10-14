@@ -76,7 +76,7 @@ class ProductRepository:
     ) -> Sequence[Product]:
         statement = select(Product).where(
             Product.tenant_id == tenant_id,
-            Product.name.ilike(f"%{query}%"),
+            (Product.name.ilike(f"%{query}%") | Product.sku.ilike(f"%{query}%")),
         )
         if active_only:
             statement = statement.where(Product.active.is_(True))

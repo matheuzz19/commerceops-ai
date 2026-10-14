@@ -22,7 +22,11 @@ pytest tests/unit tests/integration tests/contract tests/evals
 docker build --pull --tag commerceops-ai:ci .
 ```
 
-Agent evals will be added in M8 and should run separately from deterministic tests.
+M8 evaluation scorer tests and scenario runs are separate from software tests.
+Run python -m pytest tests/evals to check evaluators, then
+python -m commerceops.evals.runner --mode replay --output evals/reports/replay.json.
+See docs/evaluation.md for live runs, gates and report interpretation.
+Do not run scenario evaluation concurrently with integration tests that recreate the schema.
 
 ## Implementation Order
 

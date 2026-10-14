@@ -6,7 +6,7 @@ import json
 from collections.abc import Iterable
 from pathlib import Path
 
-from langsmith import Client, tracing_context
+from langsmith import tracing_context
 from pydantic import BaseModel, Field
 
 from commerceops.config import settings
@@ -16,6 +16,7 @@ from commerceops.graph.routing import (
     normalize_routing_plan,
 )
 from commerceops.graph.state import Department
+from commerceops.observability.tracing import tracing_client
 
 
 class RoutingEvalCase(BaseModel):
@@ -62,9 +63,7 @@ async def evaluate_routing(
 
 
 async def _run(path: Path) -> int:
-    langsmith_client = (
-        Client(api_key=settings.langsmith_api_key) if settings.langsmith_api_key else None
-    )
+    langsmith_client = tracing_client()
     with tracing_context(
         client=langsmith_client,
         project_name=settings.langsmith_project,

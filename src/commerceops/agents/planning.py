@@ -3,11 +3,11 @@
 from collections.abc import Awaitable
 from datetime import date
 from decimal import Decimal
-from typing import Generic, Literal, Protocol, TypeVar
+from typing import Annotated, Generic, Literal, Protocol, TypeVar
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, WithJsonSchema
 
 from commerceops.domain.enums import (
     InventoryMovementType,
@@ -33,12 +33,27 @@ class SalesPlan(BaseModel):
         "update_order",
         "clarify",
     ]
-    query: str | None = None
-    customer_query: str | None = None
+    query: str | None = Field(
+        default=None,
+        description=(
+            "Required search term for search_customers or search_products; copy the provided name."
+        ),
+    )
+    customer_query: str | None = Field(
+        default=None,
+        description=(
+            "Customer name for list_orders or create_order, copied exactly from the request."
+        ),
+    )
     customer_name: str | None = None
     email: str | None = None
     phone: str | None = None
-    order_reference: str | None = None
+    order_reference: str | None = Field(
+        default=None,
+        description=(
+            "Order UUID supplied in the request; it must still be resolved through list_orders."
+        ),
+    )
     order_status: OrderStatus | None = None
     payment_status: PaymentStatus | None = None
     items: list[SalesItemPlan] = Field(default_factory=list)
@@ -61,7 +76,10 @@ class FinancePlan(BaseModel):
     relative_period: Literal["current_month", "previous_month"] | None = None
     transaction_type: TransactionType | None = None
     transaction_status: TransactionStatus | None = None
-    amount: Decimal | None = None
+    amount: Annotated[Decimal, WithJsonSchema({"type": "string"})] | None = Field(
+        default=None,
+        description="Exact expense amount as a decimal string, without currency symbols.",
+    )
     description: str | None = None
     clarification: str | None = None
 
@@ -94,7 +112,12 @@ class LangChainPlanProvider(Generic[PlanT]):
 SALES_PROMPT = """Plan one Sales operation using the schema. Sales owns customers,
 product catalog searches, and orders. Use natural-language customer_query and
 product_query values; never invent database IDs. Ask for clarification when a
-required name, item quantity, or requested state is missing. Do not execute tools."""
+required name, item quantity, or requested state is missing. For search_customers
+and search_products, always put the search term in query. Use customer_query only
+for order operations. list_orders may list all orders without a customer name.
+update_order needs only the supplied order reference and requested status; its
+workflow resolves the reference through list_orders without a customer filter.
+Preserve the complete provided names and order references. Do not execute tools."""
 
 INVENTORY_PROMPT = """Plan one Inventory operation using the schema. Every product-
 specific request must provide a natural-language product_query; never invent a

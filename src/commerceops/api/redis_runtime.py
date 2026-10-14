@@ -1,8 +1,6 @@
 """M7 durable intake, session ownership, debounce worker and approval recovery."""
 
 import asyncio
-import json
-import logging
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -28,26 +26,41 @@ from commerceops.gateway.storage import (
 )
 from commerceops.graph.checkpoints import RedisPendingCheckpointStore
 from commerceops.graph.redis_checkpoints import RedisCheckpointSaver
-
-logger = logging.getLogger(__name__)
+from commerceops.observability.logging import IDENTITY, event
+from commerceops.observability.tracing import observed_invoke
 
 PUBLIC_STATE = (
-    "normalized_message", "routing_plan", "resolved_entities", "proposed_actions",
-    "tool_results", "specialist_results", "confirmation_request", "error", "final_response",
+    "normalized_message",
+    "routing_plan",
+    "resolved_entities",
+    "proposed_actions",
+    "tool_results",
+    "specialist_results",
+    "confirmation_request",
+    "error",
+    "final_response",
 )
 
 
 class RedisConversationRuntime(ConversationRuntime):
     def __init__(
-        self, graph: Any | None = None, *, client: Redis | None = None,
-        prefix: str = "commerceops", debounce_seconds: float | None = None,
+        self,
+        graph: Any | None = None,
+        *,
+        client: Redis | None = None,
+        prefix: str = "commerceops",
+        debounce_seconds: float | None = None,
         lease_seconds: float | None = None,
     ) -> None:
         active_client = client or Redis.from_url(
-            settings.redis_url, socket_connect_timeout=3, socket_timeout=3,
+            settings.redis_url,
+            socket_connect_timeout=3,
+            socket_timeout=3,
         )
         self.store = RedisSessionStore(
-            active_client, prefix, lease_seconds or settings.session_lock_seconds,
+            active_client,
+            prefix,
+            lease_seconds or settings.session_lock_seconds,
         )
         super().__init__(graph, RedisPendingCheckpointStore(active_client, prefix + ":pending"))
         self.checkpointer = RedisCheckpointSaver(active_client, prefix + ":checkpoints")
@@ -61,7 +74,9 @@ class RedisConversationRuntime(ConversationRuntime):
             raise SessionConflict("SESSION_NOT_FOUND", "Session not found.", 404)
 
     async def _duplicate(
-        self, digest: str, request: MessageRequest,
+        self,
+        digest: str,
+        request: MessageRequest,
     ) -> MessageResponse | None:
         receipt = await asyncio.to_thread(self.store.receipt, digest, request.message_id)
         if receipt is None:
@@ -71,7 +86,10 @@ class RedisConversationRuntime(ConversationRuntime):
         return receipt.response
 
     async def submit(
-        self, request: MessageRequest, tenant_id: str, user_id: str,
+        self,
+        request: MessageRequest,
+        tenant_id: str,
+        user_id: str,
     ) -> MessageResponse:
         digest = session_key(tenant_id, request.session_id)
         previous = await asyncio.to_thread(self.store.read, digest)
@@ -84,8 +102,11 @@ class RedisConversationRuntime(ConversationRuntime):
             record = await asyncio.to_thread(self.store.read, digest)
             if record is None:
                 record = SessionRecord(
-                    tenant_id=tenant_id, user_id=user_id, session_id=request.session_id,
-                    thread_id=digest, status="buffered",
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    session_id=request.session_id,
+                    thread_id=digest,
+                    status="buffered",
                 )
             self._verify_owner(record, tenant_id, user_id)
             duplicate = await self._duplicate(digest, request)
@@ -98,7 +119,10 @@ class RedisConversationRuntime(ConversationRuntime):
                     "INCOMPATIBLE_BUFFER", "Only text messages can be aggregated."
                 )
             response = MessageResponse(
-                status="buffered", response=None, checkpoint_id=None, trace_id=str(uuid4()),
+                status="buffered",
+                response=None,
+                checkpoint_id=None,
+                trace_id=(IDENTITY.get() or {}).get("request_id") or str(uuid4()),
             )
             record.buffer.append(BufferedMessage(request=request, timestamp=datetime.now(UTC)))
             record.status = "buffered"
@@ -106,18 +130,33 @@ class RedisConversationRuntime(ConversationRuntime):
             record.source_message_ids = [item.request.message_id for item in record.buffer]
             now = await asyncio.to_thread(self.store.now)
             await asyncio.to_thread(
-                self.store.save, record, token,
-                {request.message_id: MessageReceipt(
-                    fingerprint=message_fingerprint(request), response=response,
-                )},
+                self.store.save,
+                record,
+                token,
+                {
+                    request.message_id: MessageReceipt(
+                        fingerprint=message_fingerprint(request),
+                        response=response,
+                    )
+                },
                 now + self.debounce_seconds,
             )
             if request.debounce:
+                event(
+                    "message_buffered",
+                    tenant_id=tenant_id,
+                    session_id=request.session_id,
+                    source_message_count=len(record.buffer),
+                    status="buffered",
+                )
                 return response
             return await self._run_buffer(record, token)
 
     async def _save_result(
-        self, record: SessionRecord, token: bytes, response: MessageResponse,
+        self,
+        record: SessionRecord,
+        token: bytes,
+        response: MessageResponse,
     ) -> MessageResponse:
         previous_handle = record.result.checkpoint_id if record.result else None
         record.status = response.status
@@ -134,27 +173,39 @@ class RedisConversationRuntime(ConversationRuntime):
         return response
 
     async def _response_for_session(
-        self, result: dict[str, Any], record: SessionRecord, trace_id: str,
+        self,
+        result: dict[str, Any],
+        record: SessionRecord,
+        trace_id: str,
     ) -> MessageResponse:
         config = {"configurable": {"thread_id": record.thread_id}}
         response = await asyncio.to_thread(
-            self._response, result, trace_id, str(uuid4()),
-            record.tenant_id, record.user_id, config,
+            self._response,
+            result,
+            trace_id,
+            str(uuid4()),
+            record.tenant_id,
+            record.user_id,
+            config,
         )
         if response.checkpoint_id is not None:
             pending = await asyncio.to_thread(self.pending.get, response.checkpoint_id)
             if pending is not None:
                 await asyncio.to_thread(
-                    self.pending.put, replace(pending, session_id=record.session_id),
+                    self.pending.put,
+                    replace(pending, session_id=record.session_id),
                 )
         return response
 
     @staticmethod
     def _failed(trace_id: str, code: str) -> MessageResponse:
         return MessageResponse(
-            status="failed", response="The operation could not be completed safely. "
+            status="failed",
+            response="The operation could not be completed safely. "
             "Inspect the session and business records before submitting a replacement request.",
-            checkpoint_id=None, trace_id=trace_id, error_code=code,
+            checkpoint_id=None,
+            trace_id=trace_id,
+            error_code=code,
         )
 
     async def _run_buffer(self, record: SessionRecord, token: bytes) -> MessageResponse:
@@ -167,14 +218,22 @@ class RedisConversationRuntime(ConversationRuntime):
         trace_id = record.result.trace_id if record.result else str(uuid4())
         await asyncio.to_thread(self.store.save, record, token, due=0)
         try:
-            result = await self.graph.ainvoke({
-                "tenant_id": record.tenant_id, "user_id": record.user_id,
-                "session_id": record.session_id, "message_id": request.message_id,
-                "content": request.content, "content_type": request.content_type,
-                "timestamp": messages[-1].timestamp,
-                "source_message_ids": record.source_message_ids,
-                "execution_id": record.execution_id,
-            }, config={"configurable": {"thread_id": record.thread_id}})
+            result = await observed_invoke(
+                self.graph,
+                {
+                    "tenant_id": record.tenant_id,
+                    "user_id": record.user_id,
+                    "session_id": record.session_id,
+                    "message_id": request.message_id,
+                    "content": request.content,
+                    "content_type": request.content_type,
+                    "timestamp": messages[-1].timestamp,
+                    "source_message_ids": record.source_message_ids,
+                    "execution_id": record.execution_id,
+                },
+                config={"configurable": {"thread_id": record.thread_id}},
+                trace_id=trace_id,
+            )
             response = await self._response_for_session(result, record, trace_id)
         except RedisError:
             raise
@@ -183,7 +242,12 @@ class RedisConversationRuntime(ConversationRuntime):
         return await self._save_result(record, token, response)
 
     async def resume(
-        self, checkpoint_id: str, tenant_id: str, user_id: str, *, approved: bool,
+        self,
+        checkpoint_id: str,
+        tenant_id: str,
+        user_id: str,
+        *,
+        approved: bool,
     ) -> MessageResponse | None:
         pending = await asyncio.to_thread(self.pending.get, checkpoint_id)
         if pending is None or pending.tenant_id != tenant_id or pending.user_id != user_id:
@@ -204,12 +268,21 @@ class RedisConversationRuntime(ConversationRuntime):
             if claimed is None:
                 return None
             record.status = "running"
-            trace_id = str(uuid4())
+            trace_id = (IDENTITY.get() or {}).get("request_id") or str(uuid4())
             await asyncio.to_thread(self.store.save, record, token, due=0)
             try:
-                result = await self.graph.ainvoke(Command(resume={
-                    interrupt_id: {"approved": approved} for interrupt_id in claimed.interrupt_ids
-                }), config=claimed.config)
+                result = await self.graph.ainvoke(
+                    Command(
+                        resume={
+                            interrupt_id: {"approved": approved}
+                            for interrupt_id in claimed.interrupt_ids
+                        }
+                    ),
+                    config=claimed.config,
+                    trace_id=trace_id,
+                    tenant_id=tenant_id,
+                    session_id=record.session_id,
+                )
                 response = await self._response_for_session(result, record, trace_id)
             except RedisError:
                 raise
@@ -218,7 +291,10 @@ class RedisConversationRuntime(ConversationRuntime):
             return await self._save_result(record, token, response)
 
     async def session_state(
-        self, session_id: str, tenant_id: str, user_id: str,
+        self,
+        session_id: str,
+        tenant_id: str,
+        user_id: str,
     ) -> SessionStateResponse | None:
         record = await asyncio.to_thread(self.store.read, session_key(tenant_id, session_id))
         if record is None:
@@ -231,11 +307,15 @@ class RedisConversationRuntime(ConversationRuntime):
             )
             channels = saved.checkpoint["channel_values"] if saved is not None else {}
             if channels.get("execution_id") == record.execution_id:
-                values = jsonable_encoder({key: channels[key] for key in PUBLIC_STATE
-                                          if key in channels})
+                values = jsonable_encoder(
+                    {key: channels[key] for key in PUBLIC_STATE if key in channels}
+                )
         return SessionStateResponse(
-            session_id=session_id, status=record.status, result=record.result,
-            source_message_ids=record.source_message_ids, state=values,
+            session_id=session_id,
+            status=record.status,
+            result=record.result,
+            source_message_ids=record.source_message_ids,
+            state=values,
         )
 
     async def _recover(self, record: SessionRecord, token: bytes) -> None:
@@ -252,6 +332,14 @@ class RedisConversationRuntime(ConversationRuntime):
             response = await self._response_for_session(result, record, trace_id)
         else:
             response = self._failed(trace_id, "EXECUTION_INTERRUPTED")
+        event(
+            "session_recovered",
+            tenant_id=record.tenant_id,
+            session_id=record.session_id,
+            request_id=trace_id,
+            status=response.status,
+            error_code=response.error_code,
+        )
         await self._save_result(record, token, response)
 
     async def flush_due(self) -> int:
@@ -285,9 +373,7 @@ class RedisConversationRuntime(ConversationRuntime):
             try:
                 await self.flush_due()
             except (RedisError, SessionConflict):
-                logger.warning(json.dumps({
-                    "event": "buffer_worker_error", "code": "STATE_STORE_UNAVAILABLE",
-                }))
+                event("buffer_worker_error", error_code="STATE_STORE_UNAVAILABLE")
             await asyncio.sleep(0.2)
 
     async def close(self) -> None:

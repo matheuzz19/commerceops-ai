@@ -63,3 +63,22 @@ See [M7 manual verification](m7-manual-test.md) for PowerShell examples and
 ## Secrets
 
 Use `.env` locally and `.env.example` as documentation. Never commit real secrets.
+
+## M8 observation and evaluation
+
+- GET /metrics exports Prometheus counters/histograms; scrape it per API process.
+- HTTP route labels use route templates; unknown paths use unmatched. Scrapes do
+  not count themselves. Tenant/session/request IDs are never metric labels.
+- Graph execution, verified tools, LLM usage and HITL have separate collectors.
+- Logs use safe JSON events. User content, tool arguments, credentials and raw
+  exceptions are excluded. Runtime IDs correlate events with private traces.
+- Enable LANGSMITH_TRACING with local credentials/project configuration to export
+  graph/model/tool spans. All nested inputs/outputs are hidden; inspect safe metadata.
+- Application shutdown flushes pending traces with a bounded wait.
+- LLM_INPUT_USD_PER_MILLION and LLM_OUTPUT_USD_PER_MILLION optionally enable estimates.
+  Unset rates/usage mean unknown cost; estimates exclude caching/billing adjustments.
+- Keep evaluation reports outside Git (evals/reports is ignored). Normal CI uploads
+  replay artifacts; explicit workflow_dispatch can run live model evaluations.
+
+Follow docs/m8-manual-test.md for metrics, logs, HITL and evaluation verification.
+M8 adds no external metrics collector or multi-process aggregation service.

@@ -179,3 +179,22 @@ Unfinished possible writes are reported as interrupted and require inspection;
 write nodes are never automatically replayed. Redis AOF and a named volume
 provide single-instance durability, not high-availability failover or a shared
 transaction with PostgreSQL.
+
+## M8 evaluation and observation boundary
+
+The evaluation harness runs the production graph and typed MCP adapter against
+rollback-only synthetic PostgreSQL fixtures. Replay injects frozen model decisions;
+live uses the configured classifier/planners. References only grade observed tools,
+entity provenance, effects and safety; they never supply the executed actions.
+
+Request observations wrap graph execution, including worker flushes and approval
+resumes. LangChain callbacks collect node paths and available model usage. Verified
+tool calls record validated outcome/latency. Request IDs correlate HTTP responses,
+application events and LangSmith roots; buffered processing retains its intake ID.
+
+LangSmith export hides all nested IO and strips exception text/model configuration.
+JSON logs allow only safe event fields. Prometheus collectors use bounded route,
+status and tool labels without tenant/session identity. Metrics are process-local;
+external collection and deployment topology remain M9 concerns.
+
+See ADR 0008 for the decisions and limits, and docs/evaluation.md for gates.

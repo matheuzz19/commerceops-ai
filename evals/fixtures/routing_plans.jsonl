@@ -1,0 +1,41 @@
+{"id":"routing-01","query":"Create a customer named Northwind Bakery","agents":["sales"]}
+{"id":"routing-02","query":"Find the customer Alice Morgan","agents":["sales"]}
+{"id":"routing-03","query":"Search for wireless keyboard products","agents":["sales"]}
+{"id":"routing-04","query":"List orders for customer Bruno Lima","agents":["sales"]}
+{"id":"routing-05","query":"Create an order for two desk lamps","agents":["sales"]}
+{"id":"routing-06","query":"Show all confirmed orders","agents":["sales"]}
+{"id":"routing-07","query":"Add a new customer with an email address","agents":["sales"]}
+{"id":"routing-08","query":"Look up products matching standing desk","agents":["sales"]}
+{"id":"routing-09","query":"Cancel order ORD-100","agents":["sales"]}
+{"id":"routing-10","query":"Mark an order as fulfilled","agents":["sales"]}
+{"id":"routing-11","query":"Check stock for the wireless keyboard","agents":["inventory"]}
+{"id":"routing-12","query":"List inventory movements for desk lamps","agents":["inventory"]}
+{"id":"routing-13","query":"Record 20 units received into inventory","agents":["inventory"]}
+{"id":"routing-14","query":"Remove three damaged products from stock","agents":["inventory"]}
+{"id":"routing-15","query":"How many standing desks are available?","agents":["inventory"]}
+{"id":"routing-16","query":"Adjust inventory after the warehouse count","agents":["inventory"]}
+{"id":"routing-17","query":"Show recent stock movements","agents":["inventory"]}
+{"id":"routing-18","query":"Record an outbound inventory movement","agents":["inventory"]}
+{"id":"routing-19","query":"What is the current inventory level for SKU KB-1?","agents":["inventory"]}
+{"id":"routing-20","query":"Add returned units back to stock","agents":["inventory"]}
+{"id":"routing-21","query":"Show this month's revenue","agents":["finance"]}
+{"id":"routing-22","query":"Record a software subscription expense","agents":["finance"]}
+{"id":"routing-23","query":"List posted transactions","agents":["finance"]}
+{"id":"routing-24","query":"What were expenses last month?","agents":["finance"]}
+{"id":"routing-25","query":"Give me the financial summary for this quarter","agents":["finance"]}
+{"id":"routing-26","query":"Create an expense transaction for office rent","agents":["finance"]}
+{"id":"routing-27","query":"List pending revenue transactions","agents":["finance"]}
+{"id":"routing-28","query":"What is our net result for August?","agents":["finance"]}
+{"id":"routing-29","query":"Hello","agents":["general"]}
+{"id":"routing-30","query":"What can you help me with?","agents":["general"]}
+{"id":"routing-31","query":"Please help","agents":["general"]}
+{"id":"routing-32","query":"Book a flight for tomorrow","agents":["general"]}
+{"id":"routing-33","query":"Do the thing we discussed","agents":["general"]}
+{"id":"routing-34","query":"Can you manage suppliers?","agents":["general"]}
+{"id":"routing-35","query":"Tell me a joke","agents":["general"]}
+{"id":"routing-36","query":"I need to update something","agents":["general"]}
+{"id":"routing-37","query":"Show this month's revenue and current keyboard stock","agents":["finance","inventory"]}
+{"id":"routing-38","query":"Find customer Alice and show stock for desk lamps","agents":["sales","inventory"]}
+{"id":"routing-39","query":"List customer orders and this month's financial summary","agents":["sales","finance"]}
+{"id":"routing-40","query":"Find standing desk products, check stock, and show posted expenses","agents":["sales","inventory","finance"]}
+{"id":"routing-41","query":"Confirm order ORD-100 and remove two keyboards from inventory","agents":["sales","inventory"]}
