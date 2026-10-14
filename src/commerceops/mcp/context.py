@@ -19,6 +19,7 @@ class ToolRuntimeContext(BaseModel):
 
     tenant_id: UUID
     specialist: Specialist
+    approval_grants: frozenset[str] = frozenset()
 
 
 class RuntimeContextProvider(Protocol):
@@ -33,4 +34,3 @@ class FixedRuntimeContextProvider:
 
     def __call__(self) -> ToolRuntimeContext | None:
         return self._context
-

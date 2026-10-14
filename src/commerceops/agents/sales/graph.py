@@ -4,14 +4,19 @@ from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from commerceops.agents.planning import PlanProvider, SalesPlan
-from commerceops.agents.runtime import ToolCaller, ToolClientFactory, verified_call
-from commerceops.graph.state import AgentState, ResolvedEntity, SpecialistResult
+from commerceops.agents.runtime import (
+    ToolCaller,
+    ToolClientFactory,
+    create_tool_client,
+    verified_call,
+)
+from commerceops.agents.workflow import prepare_write, standalone_specialist
+from commerceops.graph.policy import propose_action
+from commerceops.graph.state import AgentState, ProposedAction, ResolvedEntity, SpecialistResult
 from commerceops.mcp.context import Specialist
 from commerceops.mcp.tools.schemas import (
-    CustomerResultData,
     CustomerSearchData,
     OrderListData,
-    OrderResultData,
     ProductSearchData,
     ToolResult,
 )
@@ -27,6 +32,7 @@ def _finish(
     *,
     records: list[dict[str, object]] | None = None,
     entities: list[ResolvedEntity] | None = None,
+    actions: list[ProposedAction] | None = None,
     error: str | None = None,
 ) -> dict[str, object]:
     task = state["specialist_task"]
@@ -39,6 +45,7 @@ def _finish(
         ],
         "tool_results": records or [],
         "resolved_entities": entities or [],
+        "proposed_actions": actions or [],
     }
 
 
@@ -88,7 +95,7 @@ async def _resolve_product(
     ), record, None
 
 
-def make_sales_specialist(
+def make_sales_preparer(
     planner: PlanProvider[SalesPlan], client_factory: ToolClientFactory
 ) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
     async def sales_specialist(state: AgentState) -> dict[str, object]:
@@ -102,7 +109,7 @@ def make_sales_specialist(
             return _finish(state, "I could not understand the Sales request safely.",
                            error="SALES_PLANNING_FAILED")
 
-        client = client_factory(tenant_id, Specialist.SALES)
+        client = create_tool_client(client_factory, tenant_id, Specialist.SALES)
         records: list[dict[str, object]] = []
         entities: list[ResolvedEntity] = []
         if plan.action == "clarify":
@@ -129,15 +136,11 @@ def make_sales_specialist(
         if plan.action == "create_customer":
             if not plan.customer_name:
                 return _finish(state, "Please provide the new customer's name.")
-            data, result, record = await verified_call(client, "create_customer", {
+            customer_arguments: dict[str, object] = {
                 "name": plan.customer_name, "email": plan.email, "phone": plan.phone,
-            }, CustomerResultData)
-            if not isinstance(data, CustomerResultData):
-                return _finish(
-                    state, _failure_message(result), records=[record], error="TOOL_FAILED"
-                )
-            return _finish(state, f"Customer {data.customer.name} was created successfully.",
-                           records=[record])
+            }
+            action = propose_action("create_customer", customer_arguments)
+            return prepare_write(state, action)
 
         if plan.action == "list_orders":
             arguments: dict[str, object] = {}
@@ -182,24 +185,18 @@ def make_sales_specialist(
                                    entities=entities)
                 entities.append(product)
                 items.append({"product_id": product_id, "quantity": item.quantity})
-            data, result, record = await verified_call(client, "create_order", {
+            create_order_arguments: dict[str, object] = {
                 "customer_id": customer_id, "items": items,
-            }, OrderResultData)
-            records.append(record)
-            if not isinstance(data, OrderResultData):
-                return _finish(state, _failure_message(result), records=records,
-                               entities=entities, error="TOOL_FAILED")
-            return _finish(state, f"Order {data.order.id} was created successfully for "
-                           f"{data.order.total_amount}.", records=records, entities=entities)
+            }
+            action = propose_action("create_order", create_order_arguments)
+            return prepare_write(
+                state, action, records=records, entities=entities,
+                write_count=1 + len(items),
+            )
 
         if plan.action == "update_order":
             if not plan.order_reference or not plan.order_status:
                 return _finish(state, "Please provide the order and its requested status.")
-            if plan.order_status.value == "CANCELLED" or (
-                plan.payment_status and plan.payment_status.value == "REFUNDED"
-            ):
-                return _finish(state, "This high-risk order update requires M6 approval.",
-                               error="HITL_NOT_IMPLEMENTED")
             data, result, record = await verified_call(client, "list_orders", {}, OrderListData)
             records.append(record)
             if not isinstance(data, OrderListData):
@@ -216,16 +213,17 @@ def make_sales_specialist(
             arguments = {"order_id": str(order.id), "status": plan.order_status.value}
             if plan.payment_status:
                 arguments["payment_status"] = plan.payment_status.value
-            updated, update_result, record = await verified_call(
-                client, "update_order", arguments, OrderResultData
-            )
-            records.append(record)
-            if not isinstance(updated, OrderResultData):
-                return _finish(state, _failure_message(update_result), records=records,
-                               entities=entities, error="TOOL_FAILED")
-            return _finish(state, f"Order {updated.order.id} was updated successfully.",
-                           records=records, entities=entities)
+            action = propose_action("update_order", arguments)
+            return prepare_write(state, action, records=records, entities=entities)
 
         return _finish(state, "The requested Sales operation is not supported.")
 
     return sales_specialist
+
+
+def make_sales_specialist(
+    planner: PlanProvider[SalesPlan], client_factory: ToolClientFactory
+) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
+    return standalone_specialist(
+        make_sales_preparer(planner, client_factory), client_factory, "sales"
+    )

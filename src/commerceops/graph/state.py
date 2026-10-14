@@ -15,6 +15,7 @@ class NormalizedMessage(BaseModel):
     content: str = Field(min_length=1)
     content_type: Literal["text", "audio", "image", "document"] = "text"
     timestamp: datetime
+    source_message_ids: list[str] = Field(default_factory=list)
 
 
 class RouteDecision(BaseModel):
@@ -69,6 +70,18 @@ class ProposedAction(BaseModel):
     requires_confirmation: bool
 
 
+class PreparedWrite(BaseModel):
+    """Resolved write proposal captured before approval and execution."""
+
+    task_index: int = Field(ge=0)
+    agent: Literal["sales", "inventory", "finance"]
+    query: str
+    action: ProposedAction
+    resolved_entities: list[ResolvedEntity] = Field(default_factory=list)
+    available_quantity: int | None = None
+    write_count: int = Field(default=1, ge=1)
+
+
 class AgentState(TypedDict, total=False):
     """Shared graph state.
 
@@ -85,6 +98,9 @@ class AgentState(TypedDict, total=False):
     content_type: Literal["text", "audio", "image", "document"]
     timestamp: datetime
 
+    source_message_ids: list[str]
+    execution_id: str
+
     # Normalized routing state.
     messages: list[Any]
     normalized_message: NormalizedMessage
@@ -97,9 +113,12 @@ class AgentState(TypedDict, total=False):
     # State reserved by the source-of-truth specification for later milestones.
     intent: str | None
     resolved_entities: Annotated[list[ResolvedEntity], operator.add]
-    proposed_actions: list[ProposedAction]
+    proposed_actions: Annotated[list[ProposedAction], operator.add]
     tool_results: Annotated[list[dict[str, Any]], operator.add]
     requires_confirmation: bool
+    prepared_writes: Annotated[list[PreparedWrite], operator.add]
+    writes_approved: bool
+    write_policy_error: str | None
     confirmation_request: dict[str, Any] | None
     error: str | None
     final_response: str | None

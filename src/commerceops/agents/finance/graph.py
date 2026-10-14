@@ -6,27 +6,30 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from commerceops.agents.planning import FinancePlan, PlanProvider
-from commerceops.agents.runtime import ToolClientFactory, verified_call
+from commerceops.agents.runtime import ToolClientFactory, create_tool_client, verified_call
+from commerceops.agents.workflow import prepare_write, standalone_specialist
 from commerceops.config import settings
-from commerceops.graph.state import AgentState, SpecialistResult
+from commerceops.graph.policy import propose_action
+from commerceops.graph.state import AgentState, ProposedAction, SpecialistResult
 from commerceops.mcp.context import Specialist
 from commerceops.mcp.tools.schemas import (
     FinancialSummaryData,
     ToolResult,
     TransactionListData,
-    TransactionResultData,
 )
 
 
 def _finish(
     state: AgentState, response: str, records: list[dict[str, object]] | None = None,
     error: str | None = None,
+    actions: list[ProposedAction] | None = None,
 ) -> dict[str, object]:
     task = state["specialist_task"]
     return {"specialist_results": [SpecialistResult(
         task_index=state["task_index"], agent="finance", query=task.query,
         response=response, error=error,
-    )], "tool_results": records or [], "resolved_entities": []}
+    )], "tool_results": records or [], "resolved_entities": [],
+        "proposed_actions": actions or []}
 
 
 def _message(result: ToolResult) -> str:
@@ -47,7 +50,7 @@ def _resolve_period(plan: FinancePlan) -> tuple[date, date] | None:
     return previous_end.replace(day=1), previous_end
 
 
-def make_finance_specialist(
+def make_finance_preparer(
     planner: PlanProvider[FinancePlan], client_factory: ToolClientFactory
 ) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
     async def finance_specialist(state: AgentState) -> dict[str, object]:
@@ -63,7 +66,7 @@ def make_finance_specialist(
                            error="FINANCE_PLANNING_FAILED")
         if plan.action == "clarify":
             return _finish(state, plan.clarification or "Please clarify the Finance request.")
-        client = client_factory(tenant_id, Specialist.FINANCE)
+        client = create_tool_client(client_factory, tenant_id, Specialist.FINANCE)
 
         if plan.action == "summary":
             period = _resolve_period(plan)
@@ -95,17 +98,21 @@ def make_finance_specialist(
         if plan.action == "create_expense":
             if plan.amount is None or plan.amount <= 0 or not plan.description:
                 return _finish(state, "Please provide a positive amount and expense description.")
-            if plan.amount > settings.large_transaction_amount:
-                return _finish(state, "This large transaction requires M6 approval.",
-                               error="HITL_NOT_IMPLEMENTED")
-            data, result, record = await verified_call(client, "create_transaction", {
+            arguments = {
                 "type": "EXPENSE", "amount": str(plan.amount),
                 "description": plan.description, "order_id": None,
-            }, TransactionResultData)
-            if not isinstance(data, TransactionResultData):
-                return _finish(state, _message(result), [record], "TOOL_FAILED")
-            return _finish(state, f"Expense transaction {data.transaction.id} was recorded "
-                           "successfully.", [record])
+            }
+            action = propose_action("create_transaction", arguments)
+            return prepare_write(state, action)
+
         return _finish(state, "The requested Finance operation is not supported.")
 
     return finance_specialist
+
+
+def make_finance_specialist(
+    planner: PlanProvider[FinancePlan], client_factory: ToolClientFactory
+) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
+    return standalone_specialist(
+        make_finance_preparer(planner, client_factory), client_factory, "finance"
+    )

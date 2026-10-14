@@ -23,3 +23,10 @@ build/
 .tox/
 .DS_Store
 Thumbs.db
+
+# Locally installed agent skills and installer metadata
+**/skills/
+skills-lock.json
+
+# Generated evaluation artifacts
+evals/reports/

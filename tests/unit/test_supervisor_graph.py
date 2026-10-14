@@ -132,7 +132,7 @@ async def test_sales_and_inventory_updates_fan_out_without_executing_writes() ->
         "inventory",
     ]
     assert result["tool_results"] == []
-    assert result.get("proposed_actions") is None
+    assert result["proposed_actions"] == []
 
 
 @pytest.mark.asyncio

@@ -1,10 +1,12 @@
 """M5 specialist runtime dependencies and verified MCP calls."""
 
-from collections.abc import Awaitable, Callable, Mapping
+import time
+from collections.abc import Awaitable, Callable, Mapping, Set
 from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
+from langsmith import trace
 from pydantic import BaseModel, SecretStr
 
 from commerceops.agents.planning import (
@@ -21,6 +23,8 @@ from commerceops.config import settings
 from commerceops.mcp.client import CommerceOpsMCPClient
 from commerceops.mcp.context import Specialist, ToolRuntimeContext
 from commerceops.mcp.tools.schemas import ToolResult
+from commerceops.observability import metrics
+from commerceops.observability.logging import event
 
 
 class ToolCaller(Protocol):
@@ -29,7 +33,7 @@ class ToolCaller(Protocol):
     ) -> Awaitable[ToolResult]: ...
 
 
-ToolClientFactory = Callable[[UUID, Specialist], ToolCaller]
+ToolClientFactory = Callable[..., ToolCaller]
 
 
 @dataclass(frozen=True)
@@ -40,10 +44,31 @@ class SpecialistDependencies:
     client_factory: ToolClientFactory
 
 
-def default_client_factory(tenant_id: UUID, specialist: Specialist) -> ToolCaller:
+def default_client_factory(
+    tenant_id: UUID,
+    specialist: Specialist,
+    approval_grants: Set[str] = frozenset(),
+) -> ToolCaller:
     return CommerceOpsMCPClient(
-        ToolRuntimeContext(tenant_id=tenant_id, specialist=specialist)
+        ToolRuntimeContext(
+            tenant_id=tenant_id,
+            specialist=specialist,
+            approval_grants=frozenset(approval_grants),
+        )
     )
+
+
+def create_tool_client(
+    factory: ToolClientFactory,
+    tenant_id: UUID,
+    specialist: Specialist,
+    approval_grants: frozenset[str] = frozenset(),
+) -> ToolCaller:
+    """Create a client, passing trusted grants only after an HITL approval."""
+
+    if approval_grants:
+        return factory(tenant_id, specialist, approval_grants)
+    return factory(tenant_id, specialist)
 
 
 def create_default_specialist_dependencies() -> SpecialistDependencies:
@@ -59,7 +84,7 @@ def create_default_specialist_dependencies() -> SpecialistDependencies:
     )
 
 
-async def verified_call(
+async def _verified_call(
     client: ToolCaller,
     tool_name: str,
     arguments: Mapping[str, object],
@@ -90,3 +115,29 @@ async def verified_call(
         )
         record["result"] = invalid.model_dump(mode="json")
         return None, invalid, record
+
+
+async def verified_call(
+    client: ToolCaller,
+    tool_name: str,
+    arguments: Mapping[str, object],
+    output_schema: type[BaseModel],
+) -> tuple[BaseModel | None, ToolResult, dict[str, object]]:
+    from commerceops.graph.policy import TOOL_INPUT_SCHEMAS
+
+    label = tool_name if tool_name in TOOL_INPUT_SCHEMAS else "unknown"
+    started = time.perf_counter()
+    status = "failed"
+    code: str | None = "TOOL_EXECUTION_FAILED"
+    try:
+        with trace("commerceops.tool", run_type="tool", inputs={}, metadata={"tool": label}) as run:
+            data, result, record = await _verified_call(client, tool_name, arguments, output_schema)
+            status = "success" if data is not None else "failed"
+            code = result.error.code if result.error else None
+            run.add_metadata({"status": status, "error_code": code})
+            return data, result, record
+    finally:
+        elapsed = time.perf_counter() - started
+        metrics.TOOL_CALLS.labels(label, status).inc()
+        metrics.TOOL_LATENCY.labels(label).observe(elapsed)
+        event("tool_result", tool=label, status=status, error_code=code, duration_seconds=elapsed)

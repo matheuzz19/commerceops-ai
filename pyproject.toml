@@ -17,8 +17,12 @@ dependencies = [
   "alembic>=1.13.0",
   "psycopg[binary]>=3.2.0",
   "redis>=5.0.0",
-  "langgraph>=0.2.0",
+  "langgraph>=1.0.0,<2.0.0",
+  "langgraph-checkpoint>=4.0.0,<5.0.0",
   "langchain-openai>=0.1.0",
+  "langchain-core>=1.0.0,<2.0.0",
+  "langsmith>=0.12.0,<1.0.0",
+  "prometheus-client>=0.21.0,<1.0.0",
   "mcp>=2.0.0,<3.0.0",
 ]
 
@@ -39,6 +43,8 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.ruff]
+# Installed third-party skill examples are not application source.
+extend-exclude = [".agents/skills"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]

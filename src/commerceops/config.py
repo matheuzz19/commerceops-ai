@@ -16,8 +16,11 @@ class Settings(BaseSettings):
     langsmith_api_key: str | None = None
     langsmith_tracing: bool = False
     langsmith_project: str = "commerceops-ai-m4"
+    llm_input_usd_per_million: Decimal | None = Field(default=None, ge=0)
+    llm_output_usd_per_million: Decimal | None = Field(default=None, ge=0)
     default_tenant_timezone: str = "UTC"
-    message_debounce_seconds: int = 3
+    message_debounce_seconds: float = Field(default=3, ge=0)
+    session_lock_seconds: float = Field(default=60, ge=1)
     max_batch_write: int = 5
     large_inventory_movement: int = 100
     large_transaction_amount: Decimal = Field(default=Decimal("1000.00"))

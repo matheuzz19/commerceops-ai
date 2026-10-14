@@ -4,14 +4,14 @@ from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from commerceops.agents.planning import InventoryPlan, PlanProvider
-from commerceops.agents.runtime import ToolClientFactory, verified_call
-from commerceops.config import settings
-from commerceops.graph.state import AgentState, ResolvedEntity, SpecialistResult
+from commerceops.agents.runtime import ToolClientFactory, create_tool_client, verified_call
+from commerceops.agents.workflow import prepare_write, standalone_specialist
+from commerceops.graph.policy import propose_action
+from commerceops.graph.state import AgentState, ProposedAction, ResolvedEntity, SpecialistResult
 from commerceops.mcp.context import Specialist
 from commerceops.mcp.tools.schemas import (
     InventoryLevelData,
     InventoryMovementListData,
-    InventoryMovementResultData,
     ProductSearchData,
     ToolResult,
 )
@@ -24,6 +24,7 @@ def _message(result: ToolResult) -> str:
 def _finish(
     state: AgentState, response: str, records: list[dict[str, object]] | None = None,
     entities: list[ResolvedEntity] | None = None, error: str | None = None,
+    actions: list[ProposedAction] | None = None,
 ) -> dict[str, object]:
     task = state["specialist_task"]
     return {
@@ -32,10 +33,11 @@ def _finish(
             response=response, error=error,
         )],
         "tool_results": records or [], "resolved_entities": entities or [],
+        "proposed_actions": actions or [],
     }
 
 
-def make_inventory_specialist(
+def make_inventory_preparer(
     planner: PlanProvider[InventoryPlan], client_factory: ToolClientFactory
 ) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
     async def inventory_specialist(state: AgentState) -> dict[str, object]:
@@ -50,7 +52,7 @@ def make_inventory_specialist(
                            error="INVENTORY_PLANNING_FAILED")
         if plan.action == "clarify":
             return _finish(state, plan.clarification or "Please clarify the Inventory request.")
-        client = client_factory(tenant_id, Specialist.INVENTORY)
+        client = create_tool_client(client_factory, tenant_id, Specialist.INVENTORY)
         records: list[dict[str, object]] = []
         entities: list[ResolvedEntity] = []
         product_id: str | None = None
@@ -114,23 +116,39 @@ def make_inventory_specialist(
                     records,
                     entities,
                 )
-            if abs(plan.quantity) > settings.large_inventory_movement:
-                return _finish(state, "This large inventory movement requires M6 approval.",
-                               records, entities, "HITL_NOT_IMPLEMENTED")
-            data, result, record = await verified_call(client, "create_inventory_movement", {
+            available_quantity: int | None = None
+            if plan.movement_type.value == "OUT":
+                level, level_result, level_record = await verified_call(
+                    client, "get_inventory_level", {"product_id": product_id}, InventoryLevelData
+                )
+                records.append(level_record)
+                if not isinstance(level, InventoryLevelData):
+                    return _finish(
+                        state, _message(level_result), records, entities, "TOOL_FAILED"
+                    )
+                available_quantity = level.available_quantity
+            movement_arguments: dict[str, object] = {
                 "product_id": product_id, "movement_type": plan.movement_type.value,
                 "quantity": plan.quantity, "reason": plan.reason,
-            }, InventoryMovementResultData)
-            records.append(record)
-            if not isinstance(data, InventoryMovementResultData):
-                return _finish(state, _message(result), records, entities, "TOOL_FAILED")
-            return _finish(
-                state,
-                f"Inventory movement {data.movement.id} was created successfully.",
-                records,
-                entities,
+            }
+            action = propose_action(
+                "create_inventory_movement", movement_arguments,
+                available_quantity=available_quantity,
             )
+            return prepare_write(
+                state, action, records=records, entities=entities,
+                available_quantity=available_quantity,
+            )
+
         return _finish(state, "The requested Inventory operation is not supported.", records,
                        entities)
 
     return inventory_specialist
+
+
+def make_inventory_specialist(
+    planner: PlanProvider[InventoryPlan], client_factory: ToolClientFactory
+) -> Callable[[AgentState], Awaitable[dict[str, object]]]:
+    return standalone_specialist(
+        make_inventory_preparer(planner, client_factory), client_factory, "inventory"
+    )
